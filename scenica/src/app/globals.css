@@ -1,0 +1,102 @@
+@import "tailwindcss";
+
+/* ═══════════════════════════════════════════════════════════════════
+   SCENICA — EXCLUSIVE 4-COLOR PALETTE SYSTEM
+   ─────────────────────────────────────────────────────────────────
+   #1A3636  → Primary Dark Background & Deep Slate Base
+   #40534C  → Dark Muted Slate Green / Surface / Borders
+   #677D6A  → Sage Olive Accent / Secondary Highlights
+   #D6BD98  → Sand Champagne Gold / Main Headings, CTA Buttons, Text
+   ═══════════════════════════════════════════════════════════════════ */
+
+:root {
+  --bg-primary: #1A3636;
+  --bg-surface: #40534C;
+  --accent-sage: #677D6A;
+  --accent-gold: #D6BD98;
+  --background: #1A3636;
+  --foreground: #D6BD98;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* ── Global Smooth Scroll & Page Base ────────────────────────────── */
+html {
+  scroll-behavior: smooth;
+  color-scheme: dark;
+}
+
+body {
+  background-color: #1A3636;
+  background: linear-gradient(160deg, #1A3636 0%, #162d2d 40%, #1A3636 100%);
+  background-attachment: fixed;
+  color: #D6BD98;
+  font-family: 'Georgia', serif;
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ── Scrollbars ─────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #1A3636;
+}
+::-webkit-scrollbar-thumb {
+  background: #40534C;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #677D6A;
+}
+
+/* ── Keyframe Animations ────────────────────────────────────────── */
+@keyframes goldShimmer {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes floatUp {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-6px); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes glowPulse {
+  0%, 100% {
+    box-shadow: 0 0 30px rgba(214, 189, 152, 0.1), 0 0 60px rgba(64, 83, 76, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 50px rgba(214, 189, 152, 0.2), 0 0 100px rgba(64, 83, 76, 0.35);
+  }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* ── Selection & Focus ─────────────────────────────────────────── */
+::selection {
+  background: #D6BD98;
+  color: #1A3636;
+}
+
+*:focus-visible {
+  outline: 2px solid #D6BD98;
+  outline-offset: 3px;
+}
