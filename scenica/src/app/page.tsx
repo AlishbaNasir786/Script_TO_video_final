@@ -1,6 +1,7 @@
 "use client";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabaseClient";
 
 export default function Home() {
   const [story, setStory] = useState("");
@@ -10,6 +11,64 @@ export default function Home() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState("");
   const [loadingStep, setLoadingStep] = useState("");
+
+  // Auth State
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authMode, setAuthMode] = useState("signin"); // "signin" | "signup"
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [user, setUser] = useState(null);
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authMessage, setAuthMessage] = useState("");
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user) setUser(user);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleAuth = async (e) => {
+    e.preventDefault();
+    setAuthError("");
+    setAuthMessage("");
+    setAuthLoading(true);
+
+    try {
+      if (authMode === "signup") {
+        const { data, error } = await supabase.auth.signUp({ email, password });
+        if (error) throw error;
+        if (data.user && !data.session) {
+          setAuthMessage("Signup successful! Please check your email to confirm your account.");
+        } else {
+          setAuthMessage("Account created successfully!");
+          setUser(data.user);
+          setTimeout(() => setAuthModalOpen(false), 1200);
+        }
+      } else {
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        setAuthMessage("Signed in successfully!");
+        setUser(data.user);
+        setTimeout(() => setAuthModalOpen(false), 1000);
+      }
+    } catch (err) {
+      setAuthError(err.message || "Authentication failed.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+  };
 
   // Suggestions state
   const [suggestions, setSuggestions] = useState([]);
@@ -300,14 +359,26 @@ export default function Home() {
           backgroundSize: "300% 300%", animation: "shimmer 5s ease infinite",
           WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", textTransform: "uppercase"
         }}>Scenica</div>
-        <div style={{ display: "flex", gap: "40px", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: "30px", alignItems: "center" }}>
           {["How It Works", "Pricing", "Gallery"].map(item => (
             <span key={item} className="nav-link" style={{ fontSize: "14px", color: "rgba(214,189,152,0.75)", cursor: "pointer", letterSpacing: "0.04em", transition: "color 0.25s", fontFamily: "system-ui, sans-serif", fontWeight: "500" }}>{item}</span>
           ))}
-          <button style={{ padding: "11px 28px", background: "linear-gradient(135deg, #40534C, #677D6A)", border: "2.5px solid #D6BD98", borderRadius: "30px", color: "#D6BD98", fontSize: "14px", cursor: "pointer", letterSpacing: "0.05em", fontFamily: "system-ui, sans-serif", fontWeight: "600", boxShadow: "0 4px 24px rgba(26,54,54,0.5)", transition: "all 0.25s" }}
-            onMouseEnter={e => { (e.target as HTMLButtonElement).style.boxShadow = "0 6px 36px rgba(103,125,106,0.6)"; (e.target as HTMLButtonElement).style.transform = "translateY(-2px)"; }}
-            onMouseLeave={e => { (e.target as HTMLButtonElement).style.boxShadow = "0 4px 24px rgba(26,54,54,0.5)"; (e.target as HTMLButtonElement).style.transform = "translateY(0)"; }}
-          >Sign In</button>
+
+          {user ? (
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <span style={{ fontSize: "13px", color: "#D6BD98", fontFamily: "system-ui, sans-serif", background: "rgba(64,83,76,0.4)", border: "2px solid rgba(103,125,106,0.5)", padding: "6px 14px", borderRadius: "20px" }}>
+                👤 {user.email}
+              </span>
+              <button onClick={handleSignOut} style={{ padding: "8px 16px", background: "rgba(40,65,65,0.6)", border: "2px solid rgba(103,125,106,0.6)", borderRadius: "20px", color: "#D6BD98", fontSize: "12px", cursor: "pointer", fontFamily: "system-ui, sans-serif", fontWeight: "500" }}>
+                Sign Out
+              </button>
+            </div>
+          ) : (
+            <button onClick={() => { setAuthModalOpen(true); setAuthError(""); setAuthMessage(""); }} style={{ padding: "11px 28px", background: "linear-gradient(135deg, #40534C, #677D6A)", border: "2.5px solid #D6BD98", borderRadius: "30px", color: "#D6BD98", fontSize: "14px", cursor: "pointer", letterSpacing: "0.05em", fontFamily: "system-ui, sans-serif", fontWeight: "600", boxShadow: "0 4px 24px rgba(26,54,54,0.5)", transition: "all 0.25s" }}
+              onMouseEnter={e => { (e.target as HTMLButtonElement).style.boxShadow = "0 6px 36px rgba(103,125,106,0.6)"; (e.target as HTMLButtonElement).style.transform = "translateY(-2px)"; }}
+              onMouseLeave={e => { (e.target as HTMLButtonElement).style.boxShadow = "0 4px 24px rgba(26,54,54,0.5)"; (e.target as HTMLButtonElement).style.transform = "translateY(0)"; }}
+            >Sign In / Sign Up</button>
+          )}
         </div>
       </nav>
 
@@ -732,10 +803,93 @@ export default function Home() {
           <div key={f.title} className="feature-card" style={{ background: "rgba(64,83,76,0.25)", border: "2.5px solid rgba(103,125,106,0.5)", borderRadius: "20px", padding: "32px 22px", textAlign: "center", transition: "all 0.3s", animation: `floatUp 6s ease-in-out infinite`, animationDelay: f.delay, backdropFilter: "blur(10px)" }}>
             <div style={{ fontSize: "34px", marginBottom: "16px" }}>{f.icon}</div>
             <div style={{ fontSize: "14px", fontWeight: "700", marginBottom: "10px", color: "#D6BD98", letterSpacing: "0.04em", fontFamily: "system-ui, sans-serif" }}>{f.title}</div>
-            <div style={{ fontSize: "13px", color: "rgba(214,189,152,0.7)", lineHeight: "1.65", fontFamily: "system-ui, sans-serif" }}>{f.desc}</div>
           </div>
         ))}
       </section>
+
+      {/* SUPABASE AUTH MODAL */}
+      {authModalOpen && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 100,
+          background: "rgba(0,0,0,0.82)", backdropFilter: "blur(16px)",
+          display: "flex", alignItems: "center", justifyContent: "center", padding: "20px"
+        }} onClick={() => setAuthModalOpen(false)}>
+          <div style={{
+            background: "#1A3636", border: "2.5px solid #D6BD98", borderRadius: "24px",
+            padding: "40px", width: "100%", maxWidth: "440px", position: "relative",
+            boxShadow: "0 12px 60px rgba(0,0,0,0.9)", animation: "fadeIn 0.3s ease forwards"
+          }} onClick={e => e.stopPropagation()}>
+            <button onClick={() => setAuthModalOpen(false)} style={{
+              position: "absolute", top: "18px", right: "22px", background: "none",
+              border: "none", color: "#D6BD98", fontSize: "20px", cursor: "pointer"
+            }}>✕</button>
+
+            <div style={{ textAlign: "center", marginBottom: "28px" }}>
+              <div style={{ fontSize: "22px", fontWeight: "800", letterSpacing: "0.14em", color: "#D6BD98", marginBottom: "6px" }}>SCENICA</div>
+              <div style={{ fontSize: "14px", color: "rgba(214,189,152,0.7)", fontFamily: "system-ui, sans-serif" }}>
+                {authMode === "signin" ? "Welcome back to your cinematic suite" : "Create your creator account"}
+              </div>
+            </div>
+
+            {/* TAB TOGGLE */}
+            <div style={{ display: "flex", background: "rgba(64,83,76,0.3)", borderRadius: "30px", border: "2px solid rgba(103,125,106,0.5)", padding: "4px", marginBottom: "24px" }}>
+              <button type="button" onClick={() => { setAuthMode("signin"); setAuthError(""); setAuthMessage(""); }} style={{
+                flex: 1, padding: "10px", borderRadius: "26px", border: "none",
+                background: authMode === "signin" ? "rgba(64,83,76,0.8)" : "transparent",
+                color: "#D6BD98", fontSize: "13px", fontWeight: authMode === "signin" ? "700" : "400",
+                cursor: "pointer", fontFamily: "system-ui, sans-serif", transition: "all 0.2s"
+              }}>Sign In</button>
+              <button type="button" onClick={() => { setAuthMode("signup"); setAuthError(""); setAuthMessage(""); }} style={{
+                flex: 1, padding: "10px", borderRadius: "26px", border: "none",
+                background: authMode === "signup" ? "rgba(64,83,76,0.8)" : "transparent",
+                color: "#D6BD98", fontSize: "13px", fontWeight: authMode === "signup" ? "700" : "400",
+                cursor: "pointer", fontFamily: "system-ui, sans-serif", transition: "all 0.2s"
+              }}>Sign Up</button>
+            </div>
+
+            <form onSubmit={handleAuth} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              {authError && (
+                <div style={{ background: "rgba(220,53,69,0.2)", border: "2px solid #dc3545", color: "#ff8b94", padding: "12px 16px", borderRadius: "12px", fontSize: "13px", fontFamily: "system-ui, sans-serif" }}>
+                  ⚠️ {authError}
+                </div>
+              )}
+
+              {authMessage && (
+                <div style={{ background: "rgba(40,167,69,0.2)", border: "2px solid #28a745", color: "#85e39d", padding: "12px 16px", borderRadius: "12px", fontSize: "13px", fontFamily: "system-ui, sans-serif" }}>
+                  ✓ {authMessage}
+                </div>
+              )}
+
+              <div>
+                <label style={{ display: "block", fontSize: "12px", color: "#D6BD98", marginBottom: "6px", fontFamily: "system-ui, sans-serif", letterSpacing: "0.05em", textTransform: "uppercase" }}>Email Address</label>
+                <input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="creator@example.com" style={{
+                  width: "100%", padding: "12px 16px", background: "rgba(64,83,76,0.3)",
+                  border: "2.5px solid rgba(103,125,106,0.6)", borderRadius: "14px",
+                  color: "#D6BD98", fontSize: "14px", fontFamily: "system-ui, sans-serif", outline: "none"
+                }} />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "12px", color: "#D6BD98", marginBottom: "6px", fontFamily: "system-ui, sans-serif", letterSpacing: "0.05em", textTransform: "uppercase" }}>Password</label>
+                <input type="password" required minLength={6} value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" style={{
+                  width: "100%", padding: "12px 16px", background: "rgba(64,83,76,0.3)",
+                  border: "2.5px solid rgba(103,125,106,0.6)", borderRadius: "14px",
+                  color: "#D6BD98", fontSize: "14px", fontFamily: "system-ui, sans-serif", outline: "none"
+                }} />
+              </div>
+
+              <button type="submit" disabled={authLoading} style={{
+                marginTop: "10px", padding: "14px", background: "linear-gradient(135deg,#40534C,#677D6A)",
+                border: "2.5px solid #D6BD98", borderRadius: "30px", color: "#D6BD98",
+                fontSize: "14px", fontWeight: "700", cursor: authLoading ? "wait" : "pointer",
+                letterSpacing: "0.06em", textTransform: "uppercase", boxShadow: "0 6px 30px rgba(0,0,0,0.5)"
+              }}>
+                {authLoading ? "Processing..." : authMode === "signin" ? "Sign In" : "Create Account"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
     </main>
   );
