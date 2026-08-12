@@ -8,6 +8,7 @@ export default function Home() {
   const [scriptStyle, setScriptStyle] = useState("");
   const [toneStyle, setToneStyle] = useState("");
   const [purposeMode, setPurposeMode] = useState(""); // "marketing" | "story" | ""
+  const [showCharacter, setShowCharacter] = useState(true); // marketing mode toggle
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState("");
   const [loadingStep, setLoadingStep] = useState("");
@@ -248,27 +249,49 @@ export default function Home() {
     setIsGenerating(true);
 
     try {
-      setLoadingStep("Analysing your story...");
-      await new Promise(r => setTimeout(r, 800));
-      setLoadingStep("Extracting characters...");
-      await new Promise(r => setTimeout(r, 600));
-      setLoadingStep("Writing your screenplay...");
+      if (purposeMode === "marketing") {
+        setLoadingStep("Analysing your brief...");
+        await new Promise(r => setTimeout(r, 600));
+        setLoadingStep("Writing your commercial script...");
 
-      const response = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ story, scriptStyle, toneStyle, purposeMode })
-      });
+        const response = await fetch("/api/generate-marketing", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ productDescription: story, showCharacter })
+        });
 
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Something went wrong.");
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Something went wrong.");
 
-      setLoadingStep("Preparing your cinematic experience...");
-      await new Promise(r => setTimeout(r, 600));
+        setLoadingStep("Preparing your commercial experience...");
+        await new Promise(r => setTimeout(r, 600));
 
-      sessionStorage.setItem("scenicaResult", JSON.stringify(data));
-      sessionStorage.setItem("scenicaStory", story);
-      router.push("/characters");
+        sessionStorage.setItem("scenicaResult", JSON.stringify(data));
+        sessionStorage.setItem("scenicaStory", story);
+        router.push("/characters");
+      } else {
+        setLoadingStep("Analysing your story...");
+        await new Promise(r => setTimeout(r, 800));
+        setLoadingStep("Extracting characters...");
+        await new Promise(r => setTimeout(r, 600));
+        setLoadingStep("Writing your screenplay...");
+
+        const response = await fetch("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ story, scriptStyle, toneStyle, purposeMode })
+        });
+
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Something went wrong.");
+
+        setLoadingStep("Preparing your cinematic experience...");
+        await new Promise(r => setTimeout(r, 600));
+
+        sessionStorage.setItem("scenicaResult", JSON.stringify(data));
+        sessionStorage.setItem("scenicaStory", story);
+        router.push("/characters");
+      }
 
     } catch (err: any) {
       setError(err.message || "Something went wrong. Please try again.");
@@ -723,64 +746,46 @@ export default function Home() {
 
           <div style={{ height: "1px", background: "linear-gradient(90deg, transparent, rgba(103,125,106,0.4), transparent)", marginBottom: "36px" }}/>
 
-          {/* SCRIPT STYLE — only show in story mode */}
-          {purposeMode !== "marketing" && (
-            <>
-              <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", letterSpacing: "0.18em", color: "#D6BD98", marginBottom: "8px", textTransform: "uppercase", fontFamily: "system-ui, sans-serif", fontWeight: "700" }}>
-                <span style={{ color: "#677D6A" }}>✦</span> Script Style
-                <span style={{ fontSize: "11px", color: "rgba(214,189,152,0.5)", textTransform: "none", letterSpacing: "0", fontWeight: "400", marginLeft: "4px" }}>— changes the actual format and structure of your screenplay</span>
-              </label>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "10px", marginBottom: "32px" }}>
-                {scriptStyles.map(s => (
-                  <button key={s.id} className="style-card" onClick={() => setScriptStyle(scriptStyle === s.id ? "" : s.id)} style={{
-                    padding: "14px 18px", borderRadius: "14px", textAlign: "left", cursor: "pointer", transition: "all 0.2s",
-                    border: `2.5px solid ${scriptStyle === s.id ? "#D6BD98" : "rgba(103,125,106,0.5)"}`,
-                    background: scriptStyle === s.id ? "linear-gradient(135deg, rgba(64,83,76,0.6), rgba(103,125,106,0.3))" : "rgba(40,65,65,0.4)",
-                    boxShadow: scriptStyle === s.id ? "0 4px 24px rgba(214,189,152,0.2)" : "none"
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
-                      <span style={{ fontSize: "18px" }}>{s.icon}</span>
-                      <span style={{ fontSize: "13px", fontWeight: "700", color: scriptStyle === s.id ? "#D6BD98" : "rgba(214,189,152,0.85)", fontFamily: "system-ui" }}>{s.label}</span>
-                      {scriptStyle === s.id && <span style={{ marginLeft: "auto", fontSize: "10px", color: "#D6BD98", fontFamily: "system-ui" }}>✓ Selected</span>}
-                    </div>
-                    <div style={{ fontSize: "12px", color: "rgba(214,189,152,0.65)", fontFamily: "system-ui", lineHeight: "1.5" }}>{s.desc}</div>
-                  </button>
-                ))}
-              </div>
-
-              {/* TONE STYLE */}
-              <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", letterSpacing: "0.18em", color: "#D6BD98", marginBottom: "8px", textTransform: "uppercase", fontFamily: "system-ui, sans-serif", fontWeight: "700" }}>
-                <span style={{ color: "#677D6A" }}>✦</span> Emotional Tone
-                <span style={{ fontSize: "11px", color: "rgba(214,189,152,0.5)", textTransform: "none", letterSpacing: "0", fontWeight: "400", marginLeft: "4px" }}>— changes how the dialogue and emotions are written</span>
-              </label>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "10px", marginBottom: "44px" }}>
-                {toneStyles.map(t => (
-                  <button key={t.id} className="style-card" onClick={() => setToneStyle(toneStyle === t.id ? "" : t.id)} style={{
-                    padding: "14px 18px", borderRadius: "14px", textAlign: "left", cursor: "pointer", transition: "all 0.2s",
-                    border: `2.5px solid ${toneStyle === t.id ? "#D6BD98" : "rgba(103,125,106,0.5)"}`,
-                    background: toneStyle === t.id ? "linear-gradient(135deg, rgba(64,83,76,0.6), rgba(103,125,106,0.3))" : "rgba(40,65,65,0.4)",
-                    boxShadow: toneStyle === t.id ? "0 4px 24px rgba(214,189,152,0.2)" : "none"
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
-                      <span style={{ fontSize: "18px" }}>{t.icon}</span>
-                      <span style={{ fontSize: "13px", fontWeight: "700", color: toneStyle === t.id ? "#D6BD98" : "rgba(214,189,152,0.85)", fontFamily: "system-ui" }}>{t.label}</span>
-                      {toneStyle === t.id && <span style={{ marginLeft: "auto", fontSize: "10px", color: "#D6BD98", fontFamily: "system-ui" }}>✓ Selected</span>}
-                    </div>
-                    <div style={{ fontSize: "12px", color: "rgba(214,189,152,0.65)", fontFamily: "system-ui", lineHeight: "1.5" }}>{t.desc}</div>
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-
-          {/* Marketing mode — professional tone chips */}
+          {/* Marketing mode — character toggle */}
           {purposeMode === "marketing" && (
-            <div style={{ marginBottom: "44px", padding: "18px 22px", background: "rgba(64,83,76,0.4)", border: "2.5px solid rgba(103,125,106,0.5)", borderRadius: "16px" }}>
-              <div style={{ fontSize: "12px", letterSpacing: "0.12em", color: "#D6BD98", fontFamily: "system-ui", fontWeight: "700", textTransform: "uppercase", marginBottom: "12px" }}>✦ Commercial Script Format</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-                {["Hook → Problem → Solution → CTA", "Max 60-second runtime", "Persuasive & professional tone", "Audience-first language"].map(tag => (
-                  <span key={tag} style={{ padding: "5px 14px", borderRadius: "20px", background: "rgba(103,125,106,0.3)", border: "2px solid #D6BD98", fontSize: "11px", color: "#D6BD98", fontFamily: "system-ui" }}>{tag}</span>
-                ))}
+            <div style={{ marginBottom: "44px" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", letterSpacing: "0.18em", color: "#D6BD98", marginBottom: "12px", textTransform: "uppercase", fontFamily: "system-ui, sans-serif", fontWeight: "700" }}>
+                <span style={{ color: "#677D6A" }}>✦</span> Character Presence
+                <span style={{ fontSize: "11px", color: "rgba(214,189,152,0.5)", textTransform: "none", letterSpacing: "0", fontWeight: "400", marginLeft: "4px" }}>— choose how your ad is presented</span>
+              </label>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                {[
+                  { id: true, icon: "🎭", label: "Show Character", desc: "1-2 on-screen personas speak the dialogue — brand ambassador or real customer" },
+                  { id: false, icon: "📽️", label: "No Character", sublabel: "Professional", desc: "Clean product-only video — on-screen text, product shots, neutral narrator only" }
+                ].map(opt => {
+                  const isSelected = showCharacter === opt.id;
+                  return (
+                    <button
+                      key={String(opt.id)}
+                      id={`char-toggle-${opt.id}`}
+                      onClick={() => setShowCharacter(opt.id as boolean)}
+                      style={{
+                        padding: "18px 20px", borderRadius: "16px", textAlign: "left", cursor: "pointer",
+                        border: `2.5px solid ${isSelected ? "#D6BD98" : "rgba(103,125,106,0.5)"}`,
+                        background: isSelected ? "linear-gradient(135deg, rgba(64,83,76,0.6), rgba(103,125,106,0.3))" : "rgba(40,65,65,0.4)",
+                        boxShadow: isSelected ? "0 0 28px rgba(214,189,152,0.18)" : "none",
+                        transition: "all 0.22s", position: "relative", overflow: "hidden"
+                      }}
+                    >
+                      {isSelected && (
+                        <div style={{ position: "absolute", top: "8px", right: "10px", fontSize: "10px", fontFamily: "system-ui", letterSpacing: "0.08em", padding: "3px 10px", borderRadius: "10px", background: "rgba(64,83,76,0.6)", color: "#D6BD98", border: "2px solid #D6BD98" }}>✓ Selected</div>
+                      )}
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
+                        <span style={{ fontSize: "24px" }}>{opt.icon}</span>
+                        <div>
+                          <div style={{ fontSize: "14px", fontWeight: "700", fontFamily: "system-ui", color: isSelected ? "#D6BD98" : "rgba(214,189,152,0.85)" }}>{opt.label}</div>
+                          {opt.sublabel && <div style={{ fontSize: "10px", fontFamily: "system-ui", letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: "700", color: "#677D6A", marginTop: "2px" }}>{opt.sublabel}</div>}
+                        </div>
+                      </div>
+                      <div style={{ fontSize: "12px", color: "rgba(214,189,152,0.7)", fontFamily: "system-ui", lineHeight: "1.5" }}>{opt.desc}</div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}

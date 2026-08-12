@@ -42,8 +42,8 @@ function localEnhanceLine(line, characterName) {
     [/you really did help/i, s => s.replace(/you really did help/i, "You actually did it — you really, truly helped")],
     [/you did it/i, s => s.replace(/you did it/i, "You actually did it — I can't believe it, but you did")],
 
-    // Core theme line — signature emotional punch
-    [/you don'?t have to be big to make a big/i, () => "It doesn't take a giant to make a difference — it just takes heart."],
+    // Core theme line — preserve sentence meaning with added emotional cadence
+    [/you don'?t have to be big to make a big/i, s => s.replace(/you don'?t have to be big to make a big/i, "You don't have to be big — not at all — to make a truly big")],
 
     // Generic excitement / disbelief
     [/look at you/i, s => s.replace(/look at you/i, "Just look at you —")],
@@ -212,7 +212,7 @@ export async function POST(request) {
 
     // ── Single Dialogue Line Enhancement Mode ──
     if (mode === "enhance-line") {
-      const linePrompt = `FULL STORY CONTEXT:
+      const linePrompt = `FULL STORY / SCRIPT CONTEXT:
 "${story}"
 
 CHARACTER NAME: ${characterName || "Character"}
@@ -221,13 +221,18 @@ CHARACTER PERSONALITY: ${personality || "Consistent with story"}
 ORIGINAL LINE OF DIALOGUE:
 "${lineText}"
 
-SYSTEM INSTRUCTION:
-Rewrite this one line of dialogue to be more emotionally touching and vivid, while: keeping the same core meaning, staying consistent with the character's personality and the story's tone, not changing the plot, and keeping roughly the same length. Return only the rewritten line, no explanation.`;
+CRITICAL DIALOGUE ENHANCEMENT RULES:
+1. EASY & CONVERSATIONAL: Use simple, natural everyday words. The dialogue MUST be easy and fluid to speak out loud — no artificial jargon or overly complex academic phrasing.
+2. SINGLE COMPLETE SENTENCE: Rewrite as ONE clear, well-formed sentence (approx 12 to 15 words). Do NOT break into multiple choppy sentences or tiny fragments.
+3. PRESERVE EXACT MEANING: Keep the exact same core message, facts, and emotional intent of the original sentence.
+4. 30-SECOND PACING: Write with natural rhythm and breath pauses suitable for a 30-second total video duration.
+
+Return ONLY the rewritten single sentence of dialogue. No quotation marks, no preamble, no explanations.`;
 
       let enhancedText = "";
       if (process.env.ANTHROPIC_API_KEY) {
         try {
-          const raw = await callClaude(linePrompt, "You are a dialogue polishing expert.");
+          const raw = await callClaude(linePrompt, "You are a dialogue polishing expert who strictly preserves the original meaning and message of every sentence.");
           if (raw) {
             enhancedText = raw.replace(/^["'“”]+|["'“”]+$/g, "").trim();
           }
@@ -240,7 +245,7 @@ Rewrite this one line of dialogue to be more emotionally touching and vivid, whi
         // Claude retry with simpler prompt when first attempt fails
         try {
           const raw = await callClaude(
-            `Rewrite this dialogue line to be more emotionally vivid. Return only the rewritten line:\n"${lineText}"`,
+            `Rewrite this dialogue line to be more vivid while preserving its EXACT meaning and core message. Return only the rewritten line:\n"${lineText}"`,
             "You are a dialogue polishing expert."
           );
           if (raw) {

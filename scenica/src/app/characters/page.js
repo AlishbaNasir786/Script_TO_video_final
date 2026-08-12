@@ -475,25 +475,25 @@ export default function Characters() {
     const buildRowsFromScenes = async () => {
       const rows = [];
 
-      // Tier 0 — authoritative Claude extraction stored in result
-      if (Array.isArray(parsed?.claudeDialogue) && parsed.claudeDialogue.length > 0) {
+      // Tier 1 — Full screenplay scenes (contains complete 3-act arc with intro, climax & closing resolution)
+      let sceneRows = [];
+      (parsed?.scenes || []).forEach(sc => {
+        (sc.dialogue || []).forEach(d => {
+          if (!d || !d.text || !d.character) return;
+          const charName = resolveChar(d.character) || d.character.trim().toUpperCase();
+          sceneRows.push({ character: charName, original: d.text, enhanced: "", emotion: d.emotion || "neutral", parenthetical: d.parenthetical || "", status: "idle" });
+        });
+      });
+
+      if (sceneRows.length >= (parsed?.claudeDialogue?.length || 0) && sceneRows.length > 0) {
+        sceneRows.forEach(r => rows.push(r));
+      } else if (Array.isArray(parsed?.claudeDialogue) && parsed.claudeDialogue.length > 0) {
         parsed.claudeDialogue.forEach(d => {
           const charName = resolveChar(d.speaker) || (d.speaker || "").trim().toUpperCase();
           const text = (d.quote || "").trim();
           if (charName && text) {
             rows.push({ character: charName, original: text, enhanced: "", emotion: "neutral", parenthetical: "", status: "idle" });
           }
-        });
-      }
-
-      // Tier 1 — screenplay parser scenes
-      if (rows.length === 0) {
-        (parsed?.scenes || []).forEach(sc => {
-          (sc.dialogue || []).forEach(d => {
-            if (!d || !d.text || !d.character) return;
-            const charName = resolveChar(d.character) || d.character.trim().toUpperCase();
-            rows.push({ character: charName, original: d.text, enhanced: "", emotion: d.emotion || "neutral", parenthetical: d.parenthetical || "", status: "idle" });
-          });
         });
       }
 
@@ -534,8 +534,22 @@ export default function Characters() {
       }
 
       const validRows = rows.filter(r => r.character && !NON_CHAR_NAMES.has(r.character.trim().toUpperCase()));
-      setDialogueRows(validRows);
-      if (validRows.length > 0) autoEnhanceAll(validRows, parsed);
+      
+      // 30-Second Rule Enforcer: Cap dialogue rows to 70 total spoken words max (~28-30s)
+      let wordAccumulator = 0;
+      const cappedRows = [];
+      for (const r of validRows) {
+        const lineWords = (r.original || "").trim().split(/\s+/).filter(Boolean).length;
+        if (wordAccumulator + lineWords <= 72 || cappedRows.length === 0) {
+          cappedRows.push(r);
+          wordAccumulator += lineWords;
+        } else {
+          break;
+        }
+      }
+
+      setDialogueRows(cappedRows);
+      if (cappedRows.length > 0) autoEnhanceAll(cappedRows, parsed);
 
       // Sync new speakers into character cards
       if (rows.length > 0) {
@@ -790,78 +804,7 @@ export default function Characters() {
               {displayCharacters.length} character{displayCharacters.length !== 1 ? "s" : ""} extracted · Click any card to explore their full profile and dialogue
             </p>
           </div>
-
-          <button
-            onClick={fetchCharacterSuggestions}
-            disabled={isFetchingSuggestions}
-            style={{
-              padding: "12px 22px", borderRadius: "16px",
-              background: "linear-gradient(135deg, rgba(64,83,76,0.5), rgba(103,125,106,0.3))",
-              border: "2.5px solid #D6BD98", color: "#D6BD98",
-              fontSize: "13px", fontFamily: "system-ui", fontWeight: "600",
-              cursor: "pointer", display: "flex", alignItems: "center", gap: "8px",
-              boxShadow: "0 4px 20px rgba(26,54,54,0.4)", transition: "all 0.25s"
-            }}
-            onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.borderColor = "#D6BD98"; }}
-            onMouseLeave={e => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.borderColor = "#D6BD98"; }}
-          >
-            <span>✨</span> Enhance Characters
-          </button>
         </div>
-
-        {/* ── AI CHARACTER SUGGESTIONS PANEL ── */}
-        {showSuggestionsPanel && (
-          <div style={{ marginTop: "28px", background: "rgba(40,65,65,0.4)", border: "2.5px solid rgba(103,125,106,0.5)", borderRadius: "20px", padding: "24px", backdropFilter: "blur(20px)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-              <div style={{ fontSize: "12px", fontFamily: "system-ui", fontWeight: "700", letterSpacing: "0.12em", color: "#D6BD98", textTransform: "uppercase", display: "flex", alignItems: "center", gap: "8px" }}>
-                <span>✨</span> AI Character Enhancements
-              </div>
-              <button onClick={() => setShowSuggestionsPanel(false)} style={{ width: "26px", height: "26px", borderRadius: "50%", border: "2px solid rgba(103,125,106,0.5)", background: "rgba(64,83,76,0.4)", color: "#D6BD98", fontSize: "13px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
-            </div>
-
-            {isFetchingSuggestions && (
-              <div style={{ textAlign: "center", padding: "20px", color: "rgba(214,189,152,0.7)", fontFamily: "system-ui", fontSize: "13px" }}>
-                Generating character enhancement suggestions…
-              </div>
-            )}
-
-            {!isFetchingSuggestions && suggestions.length > 0 && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "12px" }}>
-                {suggestions.map((s, i) => {
-                  const isAcc = acceptedIds.has(s.id);
-                  return (
-                    <div key={s.id} style={{ background: isAcc ? "rgba(103,125,106,0.2)" : "rgba(64,83,76,0.25)", border: `2.5px solid ${isAcc ? "#D6BD98" : "rgba(103,125,106,0.5)"}`, borderRadius: "14px", padding: "14px 16px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
-                      <div>
-                        <div style={{ fontSize: "13px", fontWeight: "700", color: "#D6BD98", fontFamily: "system-ui", marginBottom: "4px" }}>
-                          {isAcc ? "✓ " : `${i + 1}. `}{s.title}
-                        </div>
-                        <div style={{ fontSize: "12px", color: "rgba(214,189,152,0.7)", fontFamily: "system-ui", lineHeight: "1.5", marginBottom: "8px" }}>{s.description}</div>
-                        <div style={{ fontSize: "12px", color: "rgba(214,189,152,0.6)", fontFamily: "'Georgia',serif", fontStyle: "italic", lineHeight: "1.5", padding: "6px 10px", background: "rgba(26,54,54,0.5)", borderRadius: "8px", marginBottom: "12px" }}>
-                          "{s.addedText}"
-                        </div>
-                      </div>
-                      {!isAcc ? (
-                        <button
-                          onClick={() => handleAcceptSuggestion(s)}
-                          style={{
-                            alignSelf: "flex-end", padding: "6px 14px", borderRadius: "8px",
-                            border: "2px solid #D6BD98", background: "rgba(64,83,76,0.4)",
-                            color: "#D6BD98", fontSize: "11px", fontFamily: "system-ui", fontWeight: "600",
-                            cursor: "pointer", transition: "all 0.2s"
-                          }}
-                          onMouseEnter={e => { e.currentTarget.style.background = "rgba(103,125,106,0.5)"; }}
-                          onMouseLeave={e => { e.currentTarget.style.background = "rgba(64,83,76,0.4)"; }}
-                        >+ Accept</button>
-                      ) : (
-                        <span style={{ alignSelf: "flex-end", fontSize: "11px", color: "#D6BD98", fontFamily: "system-ui", fontWeight: "600" }}>✓ Added to Profile</span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
       </section>
 
       {/* LAYOUT */}
@@ -1005,119 +948,120 @@ export default function Characters() {
         })()}
       </section>
 
-      {/* DIALOGUE ENHANCEMENT TABLE */}
-      <section style={{ maxWidth: "1140px", margin: "0 auto", padding: "0 32px 60px", animation: "fadeIn 0.6s ease forwards" }}>
-        <div style={{ marginBottom: "20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: "8px", fontSize: "11px", letterSpacing: "0.18em", color: "#D6BD98", border: "2.5px solid rgba(103,125,106,0.5)", padding: "5px 15px", borderRadius: "20px", marginBottom: "12px", textTransform: "uppercase", background: "rgba(64,83,76,0.4)" }}>
-              <span>✦</span> Dialogue Enhancement Studio
+      {/* DIALOGUE ENHANCEMENT TABLE — Only show for story mode */}
+      {result.purposeMode !== "marketing" ? (
+        <section style={{ maxWidth: "1140px", margin: "0 auto", padding: "0 32px 60px", animation: "fadeIn 0.6s ease forwards" }}>
+          <div style={{ marginBottom: "20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: "8px", fontSize: "11px", letterSpacing: "0.18em", color: "#D6BD98", border: "2.5px solid rgba(103,125,106,0.5)", padding: "5px 15px", borderRadius: "20px", marginBottom: "12px", textTransform: "uppercase", background: "rgba(64,83,76,0.4)" }}>
+                <span>✦</span> Dialogue Enhancement Studio
+              </div>
+              <h2 style={{ fontSize: "22px", fontWeight: "300", color: "#D6BD98", letterSpacing: "-0.01em" }}>
+                Original &amp; <span style={{ backgroundImage: "linear-gradient(135deg,#D6BD98,#677D6A)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", fontStyle: "italic" }}>AI-Enhanced</span> Dialogue
+              </h2>
             </div>
-            <h2 style={{ fontSize: "22px", fontWeight: "300", color: "#D6BD98", letterSpacing: "-0.01em" }}>
-              Original &amp; <span style={{ backgroundImage: "linear-gradient(135deg,#D6BD98,#677D6A)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", fontStyle: "italic" }}>AI-Enhanced</span> Dialogue
-            </h2>
+            {/* Status pill */}
+            {dialogueRows.length > 0 && (
+              <div style={{
+                display: "flex", alignItems: "center", gap: "8px",
+                padding: "8px 16px", borderRadius: "14px", fontSize: "12px",
+                fontFamily: "system-ui", fontWeight: "600",
+                background: "rgba(64,83,76,0.4)",
+                border: "2.5px solid #D6BD98",
+                color: "#D6BD98"
+              }}>
+                {isEnhancingAll ? (
+                  <>
+                    <span style={{ display: "inline-block", width: "9px", height: "9px", border: "2px solid rgba(214,189,152,0.4)", borderTop: "2px solid #D6BD98", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+                    Enhancing {dialogueRows.filter(r => r.status === "done").length}/{dialogueRows.length} lines...
+                  </>
+                ) : dialogueRows.every(r => r.status === "done") ? (
+                  <>✓ All {dialogueRows.length} lines enhanced</>
+                ) : (
+                  <>✨ Enhancement ready</>
+                )}
+              </div>
+            )}
           </div>
-          {/* Status pill */}
-          {dialogueRows.length > 0 && (
-            <div style={{
-              display: "flex", alignItems: "center", gap: "8px",
-              padding: "8px 16px", borderRadius: "14px", fontSize: "12px",
-              fontFamily: "system-ui", fontWeight: "600",
-              background: "rgba(64,83,76,0.4)",
-              border: "2.5px solid #D6BD98",
-              color: "#D6BD98"
-            }}>
-              {isEnhancingAll ? (
-                <>
-                  <span style={{ display: "inline-block", width: "9px", height: "9px", border: "2px solid rgba(214,189,152,0.4)", borderTop: "2px solid #D6BD98", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-                  Enhancing {dialogueRows.filter(r => r.status === "done").length}/{dialogueRows.length} lines...
-                </>
-              ) : dialogueRows.every(r => r.status === "done") ? (
-                <>✓ All {dialogueRows.length} lines enhanced</>
-              ) : (
-                <>✨ Enhancement ready</>
-              )}
+          {dialogueRows.length === 0 ? (
+            <div style={{ background: "rgba(40,65,65,0.4)", border: "2.5px solid rgba(103,125,106,0.5)", borderRadius: "20px", padding: "36px 24px", textAlign: "center", backdropFilter: "blur(20px)" }}>
+              <div style={{ fontSize: "32px", marginBottom: "10px" }}>📖</div>
+              <div style={{ fontSize: "16px", color: "#D6BD98", fontWeight: "600", marginBottom: "6px" }}>Action-Driven Story (No Direct Spoken Dialogue)</div>
+              <div style={{ fontSize: "13px", color: "rgba(214,189,152,0.7)", fontFamily: "system-ui", maxWidth: "520px", margin: "0 auto" }}>This story is narrated visually through action and description. There are no direct spoken dialogue quotes in the original text to enhance.</div>
             </div>
-          )}
-        </div>
+          ) : (
+            /* Table */
+            <div style={{ background: "rgba(40,65,65,0.4)", border: "2.5px solid rgba(103,125,106,0.5)", borderRadius: "20px", overflow: "hidden", backdropFilter: "blur(20px)" }}>
+              {/* Header */}
+              <div style={{ display: "grid", gridTemplateColumns: "160px 1fr 1fr", gap: "0", padding: "14px 24px", background: "rgba(64,83,76,0.6)", borderBottom: "2px solid rgba(103,125,106,0.5)" }}>
+                {["Character", "Original", "Enhanced"].map((h, i) => (
+                  <div key={i} style={{ fontSize: "10px", fontFamily: "system-ui", fontWeight: "700", letterSpacing: "0.14em", color: "#D6BD98", textTransform: "uppercase" }}>{h}</div>
+                ))}
+              </div>
 
-        {dialogueRows.length === 0 ? (
-          <div style={{ background: "rgba(40,65,65,0.4)", border: "2.5px solid rgba(103,125,106,0.5)", borderRadius: "20px", padding: "36px 24px", textAlign: "center", backdropFilter: "blur(20px)" }}>
-            <div style={{ fontSize: "32px", marginBottom: "10px" }}>📖</div>
-            <div style={{ fontSize: "16px", color: "#D6BD98", fontWeight: "600", marginBottom: "6px" }}>Action-Driven Story (No Direct Spoken Dialogue)</div>
-            <div style={{ fontSize: "13px", color: "rgba(214,189,152,0.7)", fontFamily: "system-ui", maxWidth: "520px", margin: "0 auto" }}>This story is narrated visually through action and description. There are no direct spoken dialogue quotes in the original text to enhance.</div>
-          </div>
-        ) : (
-          /* Table */
-          <div style={{ background: "rgba(40,65,65,0.4)", border: "2.5px solid rgba(103,125,106,0.5)", borderRadius: "20px", overflow: "hidden", backdropFilter: "blur(20px)" }}>
-            {/* Header */}
-            <div style={{ display: "grid", gridTemplateColumns: "160px 1fr 1fr", gap: "0", padding: "14px 24px", background: "rgba(64,83,76,0.6)", borderBottom: "2px solid rgba(103,125,106,0.5)" }}>
-              {["Character", "Original", "Enhanced"].map((h, i) => (
-                <div key={i} style={{ fontSize: "10px", fontFamily: "system-ui", fontWeight: "700", letterSpacing: "0.14em", color: "#D6BD98", textTransform: "uppercase" }}>{h}</div>
-              ))}
-            </div>
-
-            {/* Rows */}
-            {dialogueRows.map((row, idx) => {
-              const isBusy = row.status === "loading";
-              const isDone = row.status === "done";
-              return (
-                <div
-                  key={idx}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "160px 1fr 1fr",
-                    gap: "0",
-                    padding: "16px 24px",
-                    borderBottom: idx < dialogueRows.length - 1 ? "1.5px solid rgba(103,125,106,0.3)" : "none",
-                    background: isDone ? "rgba(103,125,106,0.15)" : idx % 2 === 0 ? "rgba(64,83,76,0.2)" : "transparent",
-                    transition: "background 0.4s",
-                    alignItems: "center"
-                  }}
-                >
-                  {/* Character */}
-                  <div style={{ paddingRight: "16px" }}>
-                    <div style={{ display: "inline-flex", alignItems: "center", gap: "7px", padding: "4px 10px", borderRadius: "10px", background: "rgba(64,83,76,0.4)", border: "2px solid rgba(103,125,106,0.4)" }}>
-                      <div style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#D6BD98", flexShrink: 0 }} />
-                      <span style={{ fontSize: "11px", fontFamily: "system-ui", fontWeight: "700", color: "#D6BD98", letterSpacing: "0.06em", textTransform: "uppercase" }}>{row.character}</span>
+              {/* Rows */}
+              {dialogueRows.map((row, idx) => {
+                const isBusy = row.status === "loading";
+                const isDone = row.status === "done";
+                return (
+                  <div
+                    key={idx}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "160px 1fr 1fr",
+                      gap: "0",
+                      padding: "16px 24px",
+                      borderBottom: idx < dialogueRows.length - 1 ? "1.5px solid rgba(103,125,106,0.3)" : "none",
+                      background: isDone ? "rgba(103,125,106,0.15)" : idx % 2 === 0 ? "rgba(64,83,76,0.2)" : "transparent",
+                      transition: "background 0.4s",
+                      alignItems: "center"
+                    }}
+                  >
+                    {/* Character */}
+                    <div style={{ paddingRight: "16px" }}>
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: "7px", padding: "4px 10px", borderRadius: "10px", background: "rgba(64,83,76,0.4)", border: "2px solid rgba(103,125,106,0.4)" }}>
+                        <div style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#D6BD98", flexShrink: 0 }} />
+                        <span style={{ fontSize: "11px", fontFamily: "system-ui", fontWeight: "700", color: "#D6BD98", letterSpacing: "0.06em", textTransform: "uppercase" }}>{row.character}</span>
+                      </div>
+                      {row.parenthetical && <div style={{ fontSize: "10px", color: "rgba(214,189,152,0.5)", fontFamily: "system-ui", fontStyle: "italic", marginTop: "5px", paddingLeft: "2px" }}>({row.parenthetical})</div>}
+                      {isDone && <div style={{ marginTop: "5px", fontSize: "9px", color: "#D6BD98", fontFamily: "system-ui", fontWeight: "700", letterSpacing: "0.06em" }}>✓ AI ENHANCED</div>}
+                      {isBusy && <div style={{ marginTop: "5px", display: "flex", alignItems: "center", gap: "4px", fontSize: "9px", color: "#D6BD98", fontFamily: "system-ui" }}><span style={{ display: "inline-block", width: "7px", height: "7px", border: "1.5px solid rgba(214,189,152,0.3)", borderTop: "1.5px solid #D6BD98", borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />enhancing...</div>}
                     </div>
-                    {row.parenthetical && <div style={{ fontSize: "10px", color: "rgba(214,189,152,0.5)", fontFamily: "system-ui", fontStyle: "italic", marginTop: "5px", paddingLeft: "2px" }}>({row.parenthetical})</div>}
-                    {isDone && <div style={{ marginTop: "5px", fontSize: "9px", color: "#D6BD98", fontFamily: "system-ui", fontWeight: "700", letterSpacing: "0.06em" }}>✓ AI ENHANCED</div>}
-                    {isBusy && <div style={{ marginTop: "5px", display: "flex", alignItems: "center", gap: "4px", fontSize: "9px", color: "#D6BD98", fontFamily: "system-ui" }}><span style={{ display: "inline-block", width: "7px", height: "7px", border: "1.5px solid rgba(214,189,152,0.3)", borderTop: "1.5px solid #D6BD98", borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />enhancing...</div>}
-                  </div>
 
-                  {/* Original */}
-                  <div style={{ paddingRight: "20px", borderRight: "1.5px solid rgba(103,125,106,0.3)" }}>
-                    <div style={{ fontSize: "13px", color: "rgba(214,189,152,0.7)", fontFamily: "'Georgia',serif", fontStyle: "italic", lineHeight: "1.65" }}>
-                      &ldquo;{row.original}&rdquo;
+                    {/* Original */}
+                    <div style={{ paddingRight: "20px", borderRight: "1.5px solid rgba(103,125,106,0.3)" }}>
+                      <div style={{ fontSize: "13px", color: "rgba(214,189,152,0.7)", fontFamily: "'Georgia',serif", fontStyle: "italic", lineHeight: "1.65" }}>
+                        &ldquo;{row.original}&rdquo;
+                      </div>
                     </div>
-                  </div>
 
-                  {/* Enhanced */}
-                  <div style={{ paddingLeft: "20px" }}>
-                    {isDone ? (
-                      row.enhanced && row.enhanced.trim() !== row.original.trim() ? (
-                        <div style={{ fontSize: "13px", color: "#D6BD98", fontFamily: "'Georgia',serif", fontStyle: "italic", lineHeight: "1.65", animation: "fadeIn 0.5s ease forwards" }}>
-                          &ldquo;{row.enhanced}&rdquo;
+                    {/* Enhanced */}
+                    <div style={{ paddingLeft: "20px" }}>
+                      {isDone ? (
+                        row.enhanced && row.enhanced.trim() !== row.original.trim() ? (
+                          <div style={{ fontSize: "13px", color: "#D6BD98", fontFamily: "'Georgia',serif", fontStyle: "italic", lineHeight: "1.65", animation: "fadeIn 0.5s ease forwards" }}>
+                            &ldquo;{row.enhanced}&rdquo;
+                          </div>
+                        ) : (
+                          <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "4px 10px", borderRadius: "8px", background: "rgba(103,125,106,0.2)", border: "1px solid rgba(103,125,106,0.4)", fontSize: "11px", color: "rgba(214,189,152,0.75)", fontFamily: "system-ui", fontStyle: "normal", letterSpacing: "0.04em" }}>
+                            ✦ Already Cinematic
+                          </div>
+                        )
+                      ) : isBusy ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "rgba(214,189,152,0.6)", fontSize: "12px", fontFamily: "system-ui", fontStyle: "italic" }}>
+                          Rewriting for emotional impact...
                         </div>
                       ) : (
-                        <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "4px 10px", borderRadius: "8px", background: "rgba(103,125,106,0.2)", border: "1px solid rgba(103,125,106,0.4)", fontSize: "11px", color: "rgba(214,189,152,0.75)", fontFamily: "system-ui", fontStyle: "normal", letterSpacing: "0.04em" }}>
-                          ✦ Already Cinematic
-                        </div>
-                      )
-                    ) : isBusy ? (
-                      <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "rgba(214,189,152,0.6)", fontSize: "12px", fontFamily: "system-ui", fontStyle: "italic" }}>
-                        Rewriting for emotional impact...
-                      </div>
-                    ) : (
-                      <div style={{ fontSize: "12px", color: "rgba(214,189,152,0.3)", fontFamily: "system-ui", fontStyle: "italic" }}>—</div>
-                    )}
+                        <div style={{ fontSize: "12px", color: "rgba(214,189,152,0.3)", fontFamily: "system-ui", fontStyle: "italic" }}>—</div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      ) : null}
 
       {/* BOTTOM */}
       <section style={{ maxWidth: "1140px", margin: "0 auto", padding: "0 32px 80px", display: "flex", gap: "14px", justifyContent: "center" }}>
