@@ -13,14 +13,15 @@ export default function Home() {
   const [loadingStep, setLoadingStep] = useState("");
 
   // Auth State
-  const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authMode, setAuthMode] = useState("signin"); // "signin" | "signup"
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [user, setUser] = useState(null);
-  const [authError, setAuthError] = useState("");
-  const [authLoading, setAuthLoading] = useState(false);
-  const [authMessage, setAuthMessage] = useState("");
+  const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
+  const [fullName, setFullName] = useState<string>("");
+  const [email, setEmail] = useState<string>("");
+  const [password, setPassword] = useState<string>("");
+  const [user, setUser] = useState<any>(null);
+  const [authError, setAuthError] = useState<string>("");
+  const [authLoading, setAuthLoading] = useState<boolean>(false);
+  const [authMessage, setAuthMessage] = useState<string>("");
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -34,7 +35,7 @@ export default function Home() {
     return () => subscription.unsubscribe();
   }, []);
 
-  const handleAuth = async (e) => {
+  const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError("");
     setAuthMessage("");
@@ -42,24 +43,54 @@ export default function Home() {
 
     try {
       if (authMode === "signup") {
-        const { data, error } = await supabase.auth.signUp({ email, password });
+        // 1. Register Account in Supabase Auth
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: { full_name: fullName.trim() || email.split("@")[0] }
+          }
+        });
         if (error) throw error;
+
+        // 2. Insert Profile Record into user_profiles Database Table
+        if (data.user) {
+          await supabase.from("user_profiles").upsert({
+            id: data.user.id,
+            email: data.user.email,
+            full_name: fullName.trim() || email.split("@")[0],
+            created_at: new Date().toISOString(),
+            last_sign_in_at: new Date().toISOString()
+          }, { onConflict: "id" });
+        }
+
         if (data.user && !data.session) {
-          setAuthMessage("Signup successful! Please check your email to confirm your account.");
+          setAuthMessage("Passport Created! Please check your email to confirm registration.");
         } else {
-          setAuthMessage("Account created successfully!");
+          setAuthMessage("Passport Created & Synchronized Successfully!");
           setUser(data.user);
           setTimeout(() => setAuthModalOpen(false), 1200);
         }
       } else {
+        // 1. Sign In & Verify Credentials dynamically against Database
         const { data, error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        setAuthMessage("Signed in successfully!");
+
+        // 2. Sync Last Sign In timestamp in user_profiles Table
+        if (data.user) {
+          await supabase.from("user_profiles").upsert({
+            id: data.user.id,
+            email: data.user.email,
+            last_sign_in_at: new Date().toISOString()
+          }, { onConflict: "id" });
+        }
+
+        setAuthMessage("Authenticated! Welcome to your Creator Passport.");
         setUser(data.user);
         setTimeout(() => setAuthModalOpen(false), 1000);
       }
-    } catch (err) {
-      setAuthError(err.message || "Authentication failed.");
+    } catch (err: any) {
+      setAuthError(err.message || "Authentication failed. Please check your credentials.");
     } finally {
       setAuthLoading(false);
     }
@@ -71,13 +102,13 @@ export default function Home() {
   };
 
   // Suggestions state
-  const [suggestions, setSuggestions] = useState([]);
-  const [isFetchingSuggestions, setIsFetchingSuggestions] = useState(false);
-  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
-  const [acceptedIds, setAcceptedIds] = useState(new Set());
-  const [suggestError, setSuggestError] = useState("");
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [isFetchingSuggestions, setIsFetchingSuggestions] = useState<boolean>(false);
+  const [suggestionsOpen, setSuggestionsOpen] = useState<boolean>(false);
+  const [acceptedIds, setAcceptedIds] = useState<Set<string>>(new Set());
+  const [suggestError, setSuggestError] = useState<string>("");
 
-  const suggestTimeoutRef = useRef(null);
+  const suggestTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const router = useRouter();
 
   const scriptStyles = [
@@ -172,7 +203,7 @@ export default function Home() {
   };
 
   // Fetch AI enhancement suggestions
-  const fetchSuggestions = async (text) => {
+  const fetchSuggestions = async (text: string) => {
     if (!text || text.trim().length < 30) return;
     setSuggestError("");
     setIsFetchingSuggestions(true);
@@ -186,7 +217,7 @@ export default function Home() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to generate suggestions.");
       setSuggestions(data.suggestions || []);
-    } catch (err) {
+    } catch (err: any) {
       setSuggestError(err.message || "Could not load suggestions.");
       setSuggestions([]);
     } finally {
@@ -194,7 +225,7 @@ export default function Home() {
     }
   };
 
-  const handleAcceptSuggestion = (suggestion) => {
+  const handleAcceptSuggestion = (suggestion: any) => {
     setAcceptedIds(prev => new Set([...prev, suggestion.id]));
     setStory(prev => {
       const sep = prev.trim().endsWith(".") || prev.trim().endsWith("?") || prev.trim().endsWith("!") ? " " : ". ";
@@ -202,7 +233,7 @@ export default function Home() {
     });
   };
 
-  const handleStoryChange = (e) => {
+  const handleStoryChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setStory(e.target.value);
     if (suggestions.length > 0) {
       setSuggestions([]);
@@ -239,7 +270,7 @@ export default function Home() {
       sessionStorage.setItem("scenicaStory", story);
       router.push("/characters");
 
-    } catch (err) {
+    } catch (err: any) {
       setError(err.message || "Something went wrong. Please try again.");
       setIsGenerating(false);
       setLoadingStep("");
@@ -607,7 +638,7 @@ export default function Home() {
                         </div>
                         <div style={{ fontSize: "12px", color: "rgba(214,189,152,0.7)", fontFamily: "system-ui", lineHeight: "1.6" }}>
                           {suggestError.includes("quota") || suggestError.includes("Quota") || suggestError.includes("429")
-                            ? suggestError.replace(/Gemini API error:.*?\{.*?\}/s, "").trim() || "The free AI quota has been used up today. You can still generate your video — suggestions will be available again tomorrow."
+                            ? suggestError.replace(/(?:Gemini|Claude|Anthropic|AI) API error:.*?\{[\s\S]*?\}/gi, "").trim() || "The free AI quota has been used up today. You can still generate your video — suggestions will be available again tomorrow."
                             : suggestError}
                         </div>
                       </div>
@@ -811,13 +842,13 @@ export default function Home() {
       {authModalOpen && (
         <div style={{
           position: "fixed", inset: 0, zIndex: 100,
-          background: "rgba(0,0,0,0.82)", backdropFilter: "blur(16px)",
+          background: "rgba(0,0,0,0.85)", backdropFilter: "blur(18px)",
           display: "flex", alignItems: "center", justifyContent: "center", padding: "20px"
         }} onClick={() => setAuthModalOpen(false)}>
           <div style={{
             background: "#1A3636", border: "2.5px solid #D6BD98", borderRadius: "24px",
-            padding: "40px", width: "100%", maxWidth: "440px", position: "relative",
-            boxShadow: "0 12px 60px rgba(0,0,0,0.9)", animation: "fadeIn 0.3s ease forwards"
+            padding: "42px 40px", width: "100%", maxWidth: "460px", position: "relative",
+            boxShadow: "0 14px 70px rgba(0,0,0,0.95)", animation: "fadeIn 0.3s ease forwards"
           }} onClick={e => e.stopPropagation()}>
             <button onClick={() => setAuthModalOpen(false)} style={{
               position: "absolute", top: "18px", right: "22px", background: "none",
@@ -825,44 +856,58 @@ export default function Home() {
             }}>✕</button>
 
             <div style={{ textAlign: "center", marginBottom: "28px" }}>
-              <div style={{ fontSize: "22px", fontWeight: "800", letterSpacing: "0.14em", color: "#D6BD98", marginBottom: "6px" }}>SCENICA</div>
-              <div style={{ fontSize: "14px", color: "rgba(214,189,152,0.7)", fontFamily: "system-ui, sans-serif" }}>
-                {authMode === "signin" ? "Welcome back to your cinematic suite" : "Create your creator account"}
+              <div style={{ fontSize: "11px", letterSpacing: "0.22em", color: "#677D6A", fontFamily: "system-ui, sans-serif", textTransform: "uppercase", marginBottom: "4px" }}>Scenica Studio Security</div>
+              <div style={{ fontSize: "22px", fontWeight: "800", letterSpacing: "0.14em", color: "#D6BD98", marginBottom: "6px" }}>CREATOR PASSPORT</div>
+              <div style={{ fontSize: "13px", color: "rgba(214,189,152,0.75)", fontFamily: "system-ui, sans-serif" }}>
+                {authMode === "signin" ? "Authenticate to access your active workspace" : "Register your verified creator identity"}
               </div>
             </div>
 
             {/* TAB TOGGLE */}
-            <div style={{ display: "flex", background: "rgba(64,83,76,0.3)", borderRadius: "30px", border: "2px solid rgba(103,125,106,0.5)", padding: "4px", marginBottom: "24px" }}>
+            <div style={{ display: "flex", background: "rgba(64,83,76,0.3)", borderRadius: "30px", border: "2.5px solid rgba(103,125,106,0.5)", padding: "4px", marginBottom: "24px" }}>
               <button type="button" onClick={() => { setAuthMode("signin"); setAuthError(""); setAuthMessage(""); }} style={{
-                flex: 1, padding: "10px", borderRadius: "26px", border: "none",
-                background: authMode === "signin" ? "rgba(64,83,76,0.8)" : "transparent",
-                color: "#D6BD98", fontSize: "13px", fontWeight: authMode === "signin" ? "700" : "400",
-                cursor: "pointer", fontFamily: "system-ui, sans-serif", transition: "all 0.2s"
+                flex: 1, padding: "11px", borderRadius: "26px", border: "none",
+                background: authMode === "signin" ? "rgba(64,83,76,0.85)" : "transparent",
+                color: "#D6BD98", fontSize: "13px", fontWeight: authMode === "signin" ? "700" : "500",
+                cursor: "pointer", fontFamily: "system-ui, sans-serif", transition: "all 0.2s",
+                boxShadow: authMode === "signin" ? "0 2px 10px rgba(0,0,0,0.3)" : "none"
               }}>Sign In</button>
               <button type="button" onClick={() => { setAuthMode("signup"); setAuthError(""); setAuthMessage(""); }} style={{
-                flex: 1, padding: "10px", borderRadius: "26px", border: "none",
-                background: authMode === "signup" ? "rgba(64,83,76,0.8)" : "transparent",
-                color: "#D6BD98", fontSize: "13px", fontWeight: authMode === "signup" ? "700" : "400",
-                cursor: "pointer", fontFamily: "system-ui, sans-serif", transition: "all 0.2s"
-              }}>Sign Up</button>
+                flex: 1, padding: "11px", borderRadius: "26px", border: "none",
+                background: authMode === "signup" ? "rgba(64,83,76,0.85)" : "transparent",
+                color: "#D6BD98", fontSize: "13px", fontWeight: authMode === "signup" ? "700" : "500",
+                cursor: "pointer", fontFamily: "system-ui, sans-serif", transition: "all 0.2s",
+                boxShadow: authMode === "signup" ? "0 2px 10px rgba(0,0,0,0.3)" : "none"
+              }}>Create Account</button>
             </div>
 
             <form onSubmit={handleAuth} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
               {authError && (
-                <div style={{ background: "rgba(220,53,69,0.2)", border: "2px solid #dc3545", color: "#ff8b94", padding: "12px 16px", borderRadius: "12px", fontSize: "13px", fontFamily: "system-ui, sans-serif" }}>
+                <div style={{ background: "rgba(220,53,69,0.18)", border: "2.5px solid #dc3545", color: "#ff8b94", padding: "12px 16px", borderRadius: "14px", fontSize: "13px", fontFamily: "system-ui, sans-serif" }}>
                   ⚠️ {authError}
                 </div>
               )}
 
               {authMessage && (
-                <div style={{ background: "rgba(40,167,69,0.2)", border: "2px solid #28a745", color: "#85e39d", padding: "12px 16px", borderRadius: "12px", fontSize: "13px", fontFamily: "system-ui, sans-serif" }}>
+                <div style={{ background: "rgba(40,167,69,0.18)", border: "2.5px solid #28a745", color: "#85e39d", padding: "12px 16px", borderRadius: "14px", fontSize: "13px", fontFamily: "system-ui, sans-serif" }}>
                   ✓ {authMessage}
                 </div>
               )}
 
+              {authMode === "signup" && (
+                <div>
+                  <label style={{ display: "block", fontSize: "11px", fontWeight: "700", color: "#D6BD98", marginBottom: "6px", fontFamily: "system-ui, sans-serif", letterSpacing: "0.08em", textTransform: "uppercase" }}>Creator Full Name</label>
+                  <input type="text" required value={fullName} onChange={e => setFullName(e.target.value)} placeholder="e.g. Alishba Nasir" style={{
+                    width: "100%", padding: "12px 16px", background: "rgba(64,83,76,0.3)",
+                    border: "2.5px solid rgba(103,125,106,0.6)", borderRadius: "14px",
+                    color: "#D6BD98", fontSize: "14px", fontFamily: "system-ui, sans-serif", outline: "none"
+                  }} />
+                </div>
+              )}
+
               <div>
-                <label style={{ display: "block", fontSize: "12px", color: "#D6BD98", marginBottom: "6px", fontFamily: "system-ui, sans-serif", letterSpacing: "0.05em", textTransform: "uppercase" }}>Email Address</label>
-                <input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="creator@example.com" style={{
+                <label style={{ display: "block", fontSize: "11px", fontWeight: "700", color: "#D6BD98", marginBottom: "6px", fontFamily: "system-ui, sans-serif", letterSpacing: "0.08em", textTransform: "uppercase" }}>Work Email Address</label>
+                <input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="creator@scenica.ai" style={{
                   width: "100%", padding: "12px 16px", background: "rgba(64,83,76,0.3)",
                   border: "2.5px solid rgba(103,125,106,0.6)", borderRadius: "14px",
                   color: "#D6BD98", fontSize: "14px", fontFamily: "system-ui, sans-serif", outline: "none"
@@ -870,7 +915,7 @@ export default function Home() {
               </div>
 
               <div>
-                <label style={{ display: "block", fontSize: "12px", color: "#D6BD98", marginBottom: "6px", fontFamily: "system-ui, sans-serif", letterSpacing: "0.05em", textTransform: "uppercase" }}>Password</label>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: "700", color: "#D6BD98", marginBottom: "6px", fontFamily: "system-ui, sans-serif", letterSpacing: "0.08em", textTransform: "uppercase" }}>Account Security Password</label>
                 <input type="password" required minLength={6} value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" style={{
                   width: "100%", padding: "12px 16px", background: "rgba(64,83,76,0.3)",
                   border: "2.5px solid rgba(103,125,106,0.6)", borderRadius: "14px",
@@ -882,9 +927,10 @@ export default function Home() {
                 marginTop: "10px", padding: "14px", background: "linear-gradient(135deg,#40534C,#677D6A)",
                 border: "2.5px solid #D6BD98", borderRadius: "30px", color: "#D6BD98",
                 fontSize: "14px", fontWeight: "700", cursor: authLoading ? "wait" : "pointer",
-                letterSpacing: "0.06em", textTransform: "uppercase", boxShadow: "0 6px 30px rgba(0,0,0,0.5)"
+                letterSpacing: "0.08em", textTransform: "uppercase", boxShadow: "0 6px 30px rgba(0,0,0,0.5)",
+                transition: "all 0.2s"
               }}>
-                {authLoading ? "Processing..." : authMode === "signin" ? "Sign In" : "Create Account"}
+                {authLoading ? "Authenticating..." : authMode === "signin" ? "Sign In to Studio" : "Register Creator Passport"}
               </button>
             </form>
           </div>

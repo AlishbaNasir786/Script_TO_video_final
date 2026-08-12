@@ -1,74 +1,5 @@
 import { NextResponse } from "next/server";
-
-const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-
-const MODEL_CASCADE = [
-  "gemini-2.5-flash",
-  "gemini-2.0-flash",
-  "gemini-2.5-flash-8b",
-  "gemini-2.0-flash-lite",
-];
-
-async function callGemini(prompt, apiKey) {
-  let lastError = null;
-
-  for (const model of MODEL_CASCADE) {
-    const url = `${GEMINI_BASE_URL}/${model}:generateContent?key=${apiKey}`;
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.85,
-            topK: 40,
-            topP: 0.95,
-            maxOutputTokens: 4096,
-          }
-        })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) return text;
-      }
-
-      const errorBody = await response.json().catch(() => ({}));
-      const status = response.status;
-
-      if (status === 429 || status === 404 || status === 400) {
-        let retrySeconds = null;
-        if (status === 429) {
-          try {
-            const retryInfo = errorBody?.error?.details?.find(d => d["@type"]?.includes("RetryInfo"));
-            if (retryInfo?.retryDelay) retrySeconds = parseInt(retryInfo.retryDelay.replace("s", ""), 10);
-          } catch (_) {}
-        }
-        lastError = { status, retrySeconds, model, message: errorBody?.error?.message };
-        continue;
-      }
-
-      throw new Error(errorBody?.error?.message || `API error ${status}`);
-    } catch (e) {
-      if (e.message && !e.message.includes("API error")) {
-        lastError = e;
-        continue;
-      }
-      throw e;
-    }
-  }
-
-  if (lastError?.status === 429) {
-    const waitMsg = lastError.retrySeconds
-      ? ` Please wait ${lastError.retrySeconds} seconds and try again.`
-      : " Daily free tier limit reached for today. Please try again later.";
-    throw new Error(`AI quota limit reached.${waitMsg}`);
-  }
-
-  throw lastError || new Error("AI generation service temporarily unavailable.");
-}
+import { extractStoryDataWithClaude, callClaude } from "@/lib/anthropicClient";
 
 export async function POST(request) {
   try {
@@ -82,10 +13,9 @@ export async function POST(request) {
       );
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
+    if (!process.env.ANTHROPIC_API_KEY) {
       return NextResponse.json(
-        { error: "Gemini API key not configured." },
+        { error: "Anthropic API key not configured." },
         { status: 500 }
       );
     }
@@ -172,7 +102,7 @@ Story: ${story}
 
 CRITICAL RULES — read every rule carefully:
 
-1. NAME: Use the EXACT name from the story, in ALL CAPS, as the cue name. No stuttering or duplicate letters (e.g. "COCO" not "CCOCO", "BIGGER CLOUDS" not "BBIGGER CLOUDS").
+1. NAME: Use the EXACT name from the story, in ALL CAPS, as the cue name. No stuttering or duplicate letters (e.g. "PROTAGONIST" not "PPROTAGONIST").
 
 2. GENDER: ONLY set "Male" or "Female" if the story EXPLICITLY uses gendered words for that character (he/him/she/her/boy/girl/man/woman/king/queen etc.). If the story does NOT specify gender for this character, you MUST set "gender": "Unspecified".
 
@@ -185,7 +115,7 @@ CRITICAL RULES — read every rule carefully:
 Return this exact format:
 [
   {
-    "name": "EXACT NAME FROM STORY IN CAPS (e.g. COCO, BIGGER CLOUDS)",
+    "name": "EXACT NAME FROM STORY IN CAPS (e.g. PROTAGONIST, CHARACTER)",
     "role": "Protagonist/Supporting/Antagonist/Love Interest",
     "age": "Exact age from story OR Unspecified",
     "gender": "Male/Female/Unspecified",
@@ -206,10 +136,12 @@ CHARACTERS: PLACEHOLDER
 ${scriptInstruction}
 ${toneInstruction}
 
-CRITICAL DIALOGUE RULE — THIS IS MANDATORY:
-The original story above may contain spoken dialogue in quotes or after colons. You MUST copy those EXACT words into the screenplay dialogue blocks. Do NOT paraphrase, shorten, expand, or rewrite any spoken words from the original story. If the original says 'Look at the sky!' then the screenplay MUST say exactly: Look at the sky! — nothing else.
+CRITICAL DIALOGUE ATTRIBUTION & ACCURACY RULE — THIS IS MANDATORY:
+1. For every line of dialogue in quotes or after colons (e.g. "Speaker: 'Quote...'"), identify the EXACT character who speaks it.
+2. NEVER assign a line of dialogue to a character unless the story explicitly indicates that specific character is speaking.
+3. You MUST copy those EXACT spoken words into the screenplay dialogue blocks. Do NOT paraphrase, shorten, expand, or rewrite any spoken words from the original story.
 
-CRITICAL NAME RULE: Every character cue in the screenplay MUST use the EXACT same name as the "name" field in the character list above. (e.g. "COCO", "BIGGER CLOUDS"). Never stutter or duplicate letters (NO CCOCO, NO BBIGGER CLOUDS). This is mandatory.
+CRITICAL NAME RULE: Every character cue in the screenplay MUST use the EXACT same name as the "name" field in the character list above (e.g. "PROTAGONIST", "CHARACTER"). Never stutter or duplicate letters. This is mandatory.
 
 CRITICAL FORMAT RULES — follow EXACTLY:
 
@@ -257,47 +189,78 @@ WRONG — never use markdown blockquotes or HTML tags anywhere.
 
 Write the complete screenplay now. Start with FADE IN: and end with FADE OUT.`;
 
-    // Step 1: Extract characters using the appropriate prompt
-    const characterPrompt = isMarketing ? marketingCharacterPrompt : storyCharacterPrompt;
-
+    // ═══════════════════════════════════════════════════════════════
+    // STEP 1 — PRIMARY: Claude extracts characters AND dialogue
+    // attribution together in one contextual pass. Trusted as ground
+    // truth — nothing downstream overrides it.
+    // ═══════════════════════════════════════════════════════════════
     let characters = [];
-    try {
-      const characterText = await callGemini(characterPrompt, apiKey);
-      const cleanCharText = characterText.replace(/```json/g, "").replace(/```/g, "").trim();
-      characters = JSON.parse(cleanCharText);
+    let claudeDialogueMap = null;
+    let claudeDialogueList = [];
 
-      const invalidNames = new Set([
-        "AND", "OR", "BUT", "SO", "THEIR", "THEIRS", "ITS", "THEY", "THE", "A", "AN", "THIS", "THAT",
-        "AND THE FARMERS", "THEIR BOOMING", "BOOMING", "FARMERS", "FARMER", "VILLAGERS", "VILLAGER"
+    const claudeResult = await extractStoryDataWithClaude(story, isMarketing);
+    if (claudeResult && claudeResult.characters && claudeResult.characters.length > 0) {
+      characters = claudeResult.characters;
+      claudeDialogueList = claudeResult.dialogue || [];
+      claudeDialogueMap = new Map();
+      claudeDialogueList.forEach(d => {
+        const key = d.quote.toLowerCase().replace(/[.!?,]+$/, "").trim();
+        if (key) claudeDialogueMap.set(key, d.speaker);
+      });
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // STEP 1b — FALLBACK ONLY: If extractStoryDataWithClaude returned nothing
+    // ═══════════════════════════════════════════════════════════════
+    if (!characters || characters.length === 0) {
+      const characterPrompt = isMarketing ? marketingCharacterPrompt : storyCharacterPrompt;
+      try {
+        const characterText = await callClaude(characterPrompt, "You are a precise story analyst. Return ONLY valid JSON, no prose.");
+        if (characterText && typeof characterText === "string") {
+          const firstBracket = characterText.indexOf("[");
+          const lastBracket = characterText.lastIndexOf("]");
+          const cleanCharText = (firstBracket !== -1 && lastBracket > firstBracket)
+            ? characterText.substring(firstBracket, lastBracket + 1)
+            : characterText.replace(/```json/gi, "").replace(/```/g, "").trim();
+          characters = JSON.parse(cleanCharText);
+        }
+      } catch (e) {
+        console.error("Claude character extraction (simplified) error:", e);
+        characters = [];
+      }
+    }
+
+    // ── Post-process ONLY IF Claude map was unavailable ──
+    // Claude's output is trusted 100% as ground truth and MUST NOT be touched by legacy regex blocklists.
+    if (!claudeDialogueMap) {
+      const COMMON_ADJECTIVES = new Set([
+        "SMALL", "LITTLE", "BIG", "LARGE", "GREAT", "OLD", "NEW", "YOUNG", "ANCIENT", "BRIGHT", "DARK", "LIGHT",
+        "GLOWING", "MYSTERIOUS", "MAGICAL", "STRANGE", "BEAUTIFUL", "UGLY", "TALL", "SHORT", "THIN", "FAT",
+        "RAINY", "SUNNY", "COLD", "HOT", "WET", "DRY", "WARM", "COOL", "SILENT", "LOUD", "SOFT", "HARD",
+        "BRAVE", "WISE", "EVIL", "GOOD", "HAPPY", "SAD", "ANGRY", "SCARED", "SURPRISED", "HOPEFUL", "FEARFUL",
+        "POINTED", "FOUND", "PICKED", "APPEARED", "WALKED", "STOOD", "SAT", "LOOKED", "TURNED", "SMILED",
+        "SUDDENLY", "SLOWLY", "QUICKLY", "SOFTLY", "LOUDLY", "CAREFULLY", "FINALLY", "ALREADY", "NEARLY",
+        "TOWARD", "UNDER", "ABOVE", "BENEATH", "BESIDE", "INSIDE", "OUTSIDE", "BEYOND", "THROUGH", "BETWEEN"
       ]);
 
-      // ── Post-process: clean names and enforce character-specific story-accuracy ──
+      const invalidNames = new Set([
+        "AND", "OR", "BUT", "SO", "THEIR", "THEIRS", "ITS", "THEY", "THE", "A", "AN", "THIS", "THAT", "SHE", "HE", "IT", "WE", "YOU", "I",
+        "AND THE FARMERS", "THEIR BOOMING", "BOOMING", "FARMERS", "FARMER", "VILLAGERS", "VILLAGER",
+      ]);
+
       const storyLower = story.toLowerCase();
-      characters = characters
+      characters = (characters || [])
         .map(c => {
-          const { name: cleanedName } = cleanSpeakerName(c.name);
+          const cleanedName = (c.name || "").trim().toUpperCase();
           const nameLower = (cleanedName || c.name || "").toLowerCase();
 
-          // Find sentences in the story mentioning this specific character
           const sentences = storyLower.split(/[.!?]+/).filter(s =>
             nameLower && s.includes(nameLower)
           );
-          const charContext = sentences.join(" ");
 
-          // Gender: check if gendered pronouns/words exist in THIS character's context
-          let gender = "Unspecified";
-          if (charContext) {
-            const hasMale   = /\b(he|him|his|boy|man|male|brother|father|son|king|prince|mr)\b/.test(charContext);
-            const hasFemale = /\b(she|her|hers|girl|woman|female|sister|mother|daughter|queen|princess|ms|mrs)\b/.test(charContext);
-            if (hasMale && !hasFemale) gender = "Male";
-            else if (hasFemale && !hasMale) gender = "Female";
-          } else if (c.gender === "Male" || c.gender === "Female") {
-            gender = c.gender;
-          }
-
-          // Age: check if explicit age indicators exist in THIS character's context
-          let age = "Unspecified";
-          if (charContext) {
+          let age = c.age || "Unspecified";
+          if (age === "Unspecified" && sentences.length > 0) {
+            const charContext = sentences.join(" ");
             if (/\b(\d+[\s-]?year[\s-]?old|child|baby|infant|teenager|teen|toddler)\b/.test(charContext)) {
               age = "Child";
             } else if (/\b(elderly|old man|old woman|grandfather|grandmother)\b/.test(charContext)) {
@@ -305,24 +268,90 @@ Write the complete screenplay now. Start with FADE IN: and end with FADE OUT.`;
             } else if (/\b(adult|man|woman)\b/.test(charContext)) {
               age = "Adult";
             }
-          } else if (c.age && c.age !== "Unspecified") {
-            age = c.age;
           }
 
-          // Clean appearance placeholder text
-          let appearance = c.appearance || "";
+          let appearance = c.appearance || c.description || "";
           if (!appearance || appearance.toLowerCase().includes("visual profile for")) {
             const descMatch = story.match(new RegExp(`\\b${cleanedName}\\s+(?:was|is)\\s+([^.!?]{5,60})`, "i"));
-            appearance = descMatch ? descMatch[1].trim() : "A key character in the story.";
-            appearance = appearance.charAt(0).toUpperCase() + appearance.slice(1);
+            if (descMatch) {
+              appearance = descMatch[1].trim();
+              appearance = appearance.charAt(0).toUpperCase() + appearance.slice(1);
+            } else {
+              const adjCtx = (nameLower ? storyLower.split(/[.!?]+/).filter(s => s.includes(nameLower)).join(" ") : "");
+              const adjMatch = adjCtx.match(/\b(tall|short|old|young|weathered|glowing|hooded|robed|slender|fierce|gentle|quiet|elderly|mysterious|radiant|shadowy)\b[^.!?]{0,40}/i);
+              appearance = adjMatch
+                ? adjMatch[0].charAt(0).toUpperCase() + adjMatch[0].slice(1)
+                : (c.role === "Protagonist"
+                    ? "The central figure of the story, defined through their actions."
+                    : "A supporting presence in the story, defined through their interactions.");
+            }
           }
 
-          return { ...c, name: cleanedName, gender, age, appearance };
+          let clothing = c.clothing || "";
+          if (!clothing || clothing.toLowerCase().includes("suitable attire")) {
+            const clothCtx = (nameLower ? storyLower.split(/[.!?]+/).filter(s => s.includes(nameLower)).join(" ") : "");
+            const clothMatch = clothCtx.match(/\b(wearing|clad in|dressed in|robe|cloak|suit|armor|jacket|hat|boots|tunic|dress|attire|garb|uniform|coat)\b[^.!?]{0,40}/i);
+            clothing = clothMatch
+              ? clothMatch[0].charAt(0).toUpperCase() + clothMatch[0].slice(1)
+              : "Not described in the original story.";
+          }
+
+          let personality = c.personality || "";
+          if (!personality || personality.length < 5) {
+            const traitWords = ["brave","wise","curious","gentle","stubborn","kind","fierce","cautious","determined","playful","loyal","mysterious","bold","persistent","observant","clever","reckless","compassionate"];
+            const charCtx = (nameLower ? storyLower.split(/[.!?]+/).filter(s => s.includes(nameLower)).join(" ") : "");
+            const foundTraits = traitWords.filter(t => charCtx.includes(t));
+            personality = foundTraits.length > 0
+              ? `${foundTraits.slice(0,3).map(t => t[0].toUpperCase()+t.slice(1)).join(", ")} — shaped by the story's events.`
+              : (c.role === "Protagonist"
+                  ? "Driven by the story's central conflict, revealed through choices and dialogue."
+                  : "Defined by how they interact with the other characters in the story.");
+          }
+
+          const description = c.description || `${appearance} (${personality})`;
+          const dialogueCount = typeof c.dialogueCount === "number" && c.dialogueCount > 0
+            ? c.dialogueCount
+            : (story.match(new RegExp(`\\b${cleanedName}\\b`, "gi")) || []).length;
+
+          return {
+            ...c,
+            name: cleanedName,
+            role: c.role || "Supporting",
+            gender: c.gender || "Unspecified",
+            age,
+            dialogueCount,
+            description,
+            appearance,
+            clothing,
+            personality,
+            emotion: c.emotion || "hopeful"
+          };
         })
-        .filter(c => c.name && !invalidNames.has(c.name.toUpperCase()) && c.name.length > 1);
-    } catch (e) {
-      console.error("Character extraction error:", e);
-      characters = [];
+        .filter(c => {
+          if (!c.name) return false;
+          const nameUp = c.name.toUpperCase();
+          if (invalidNames.has(nameUp)) return false;
+          if (COMMON_ADJECTIVES.has(nameUp)) return false;
+          return c.name.length > 1;
+        });
+
+      if (characters && characters.length > 0) {
+        let maxCount = -1;
+        let protagonistIdx = 0;
+        characters.forEach((c, idx) => {
+          const count = typeof c.dialogueCount === "number" ? c.dialogueCount : 0;
+          if (count > maxCount) {
+            maxCount = count;
+            protagonistIdx = idx;
+          }
+        });
+
+        characters = characters.map((c, idx) => ({
+          ...c,
+          name: (c.name || "").trim().toUpperCase(),
+          role: idx === protagonistIdx ? "Protagonist" : "Supporting"
+        }));
+      }
     }
 
     // Step 2: Build the script prompt with actual character names substituted
@@ -333,17 +362,19 @@ Write the complete screenplay now. Start with FADE IN: and end with FADE OUT.`;
 
     let rawScreenplay = "";
     try {
-      rawScreenplay = await callGemini(scriptPrompt, apiKey);
-    } catch (err) {
-      console.error("Screenplay generation API error, using intelligent local generator fallback:", err.message);
-      const fallbackResult = await buildFallbackScreenplayAndCharacters(story, characters, isMarketing, apiKey);
-      // Correct any misattributions using raw story text as ground truth
-      const correctedScenes = reattributeDialogueFromStory(fallbackResult.scenes, story, fallbackResult.characters);
+      rawScreenplay = await callClaude(scriptPrompt, "You are a professional Hollywood screenplay writer.");
+    } catch (e) {
+      console.warn("Claude screenplay generation failed, using local fallback:", e.message);
+      const fallbackResult = await buildFallbackScreenplayAndCharacters(story, characters, isMarketing);
+      const correctedScenes = claudeDialogueMap
+        ? applyDialogueMap(fallbackResult.scenes, claudeDialogueMap)
+        : reattributeDialogueFromStoryLegacy(fallbackResult.scenes, story, fallbackResult.characters);
       return NextResponse.json({
         success: true,
         characters: fallbackResult.characters,
         screenplay: fallbackResult.screenplay,
         scenes: correctedScenes,
+        claudeDialogue: claudeDialogueList,
         genre: isMarketing ? "marketing" : (scriptStyle || "hollywood"),
         tone: isMarketing ? "professional" : (toneStyle || "warm"),
         purposeMode: purposeMode || "story",
@@ -351,18 +382,64 @@ Write the complete screenplay now. Start with FADE IN: and end with FADE OUT.`;
       });
     }
 
-    // Clean up any HTML/markdown Gemini sneaks in
     const screenplay = cleanScreenplay(rawScreenplay);
 
-    // Step 3: Parse scenes and dialogue, then correct any Gemini misattributions
+    // Step 3: Apply trusted Claude map. Legacy regex only if Claude was unavailable.
     const rawScenes = parseScenes(screenplay, characters);
-    const scenes = reattributeDialogueFromStory(rawScenes, story, characters);
+    let scenes = claudeDialogueMap
+      ? applyDialogueMap(rawScenes, claudeDialogueMap)
+      : reattributeDialogueFromStoryLegacy(rawScenes, story, characters);
+
+    // Ensure 100% of Claude extracted dialogue quotes are included in scenes.
+    // If screenplay parser missed any quotes (e.g. final exchange at end of story),
+    // append them to the final scene so zero dialogue lines are ever lost.
+    if (claudeDialogueList && claudeDialogueList.length > 0) {
+      if (!scenes || scenes.length === 0) {
+        scenes = [{
+          id: 1,
+          heading: "INT. MAIN LOCATION - DAY",
+          location: "MAIN LOCATION",
+          timeOfDay: "DAY",
+          action: story,
+          dialogue: [],
+          emotion: "dramatic"
+        }];
+      }
+
+      const existingQuotes = new Set();
+      scenes.forEach(sc => {
+        (sc.dialogue || []).forEach(d => {
+          if (d && d.text) {
+            existingQuotes.add(d.text.trim().toLowerCase().replace(/[.!?,]+$/, ""));
+          }
+        });
+      });
+
+      const missingDialogue = claudeDialogueList.filter(d => {
+        const key = d.quote.trim().toLowerCase().replace(/[.!?,]+$/, "");
+        return key.length > 0 && !existingQuotes.has(key);
+      });
+
+      if (missingDialogue.length > 0) {
+        const targetScene = scenes[scenes.length - 1];
+        if (!targetScene.dialogue) targetScene.dialogue = [];
+        missingDialogue.forEach(d => {
+          targetScene.dialogue.push({
+            character: d.speaker,
+            text: d.quote,
+            parenthetical: "",
+            emotion: "neutral"
+          });
+        });
+      }
+    }
 
     return NextResponse.json({
       success: true,
       characters,
       screenplay,
       scenes,
+      claudeDialogue: claudeDialogueList,
       genre: isMarketing ? "marketing" : (scriptStyle || "hollywood"),
       tone: isMarketing ? "professional" : (toneStyle || "warm"),
       purposeMode: purposeMode || "story"
@@ -370,8 +447,7 @@ Write the complete screenplay now. Start with FADE IN: and end with FADE OUT.`;
 
   } catch (error) {
     console.error("Generation error:", error);
-    // Format error message cleanly without raw JSON if possible
-    const cleanMsg = error.message ? error.message.replace(/Gemini API error:\s*\{.*?\}/s, "AI limit reached. Please try again later.") : "Something went wrong. Please try again.";
+    const cleanMsg = error.message || "Something went wrong. Please try again.";
     return NextResponse.json(
       { error: cleanMsg },
       { status: 500 }
@@ -379,111 +455,53 @@ Write the complete screenplay now. Start with FADE IN: and end with FADE OUT.`;
   }
 }
 
-// ── Post-processing: correct character misattribution using raw story as ground truth ──
-//
-// Dynamically matches dialogue entries to the correct extracted character using
-// preText/postText speech tags, pronoun resolution, and addressee exclusion.
-// Works for ANY story and ANY character set without hardcoded names.
-function reattributeDialogueFromStory(scenes, story, characters = []) {
-  if (!story || !scenes || scenes.length === 0) return scenes;
+// ═══════════════════════════════════════════════════════════════════
+// TRUSTED PATH: Apply Claude ground-truth quote→speaker map to scenes.
+// ═══════════════════════════════════════════════════════════════════
+function applyDialogueMap(scenes, dialogueMap) {
+  if (!scenes || scenes.length === 0 || !dialogueMap || dialogueMap.size === 0) return scenes;
 
-  const knownChars = (characters || []).map(c => c.name?.trim().toUpperCase()).filter(Boolean);
-
-  const detectSpeaker = (txt) => {
-    if (!txt) return null;
-
-    // 1. Direct match against known character full names
-    for (const cName of knownChars) {
-      if (!cName) continue;
-      const esc = cName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      if (new RegExp(`\\b${esc}\\b`, "i").test(txt)) {
-        return cName;
-      }
+  const calcOverlap = (str1, str2) => {
+    const set1 = new Set(str1.toLowerCase().split(/\s+/).filter(w => w.length > 2));
+    const set2 = new Set(str2.toLowerCase().split(/\s+/).filter(w => w.length > 2));
+    if (set1.size === 0 || set2.size === 0) return 0;
+    let intersection = 0;
+    for (const w of set1) {
+      if (set2.has(w)) intersection++;
     }
-
-    // 2. Match without "THE " prefix if present
-    for (const cName of knownChars) {
-      if (!cName) continue;
-      const stripped = cName.replace(/^THE\s+/, "");
-      if (stripped.length > 2) {
-        const esc = stripped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        if (new RegExp(`\\b${esc}\\b`, "i").test(txt)) {
-          return cName;
-        }
-      }
-    }
-
-    // 3. Match first word token if length > 2 (e.g. "Finn" -> "FINN")
-    for (const cName of knownChars) {
-      if (!cName) continue;
-      const firstWord = cName.split(/\s+/)[0];
-      if (firstWord.length > 2) {
-        const esc = firstWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        if (new RegExp(`\\b${esc}\\b`, "i").test(txt)) {
-          return cName;
-        }
-      }
-    }
-
-    return null;
+    return intersection / Math.max(set1.size, set2.size);
   };
 
-  const findSpeakerInStory = (dialogueText) => {
-    if (!dialogueText || dialogueText.length < 3) return null;
+  const findSpeaker = (text) => {
+    if (!text) return null;
+    const clean = text.trim().replace(/[.!?,]+$/, "").toLowerCase().trim();
 
-    // Strip trailing punctuation to widen the search surface
-    const textToFind = dialogueText.trim().replace(/[.!?,]+$/, "");
-    let foundIdx = story.toLowerCase().indexOf(textToFind.toLowerCase());
+    // 1. Exact quote match
+    if (dialogueMap.has(clean)) return dialogueMap.get(clean);
 
-    // If verbatim not found, try just the first 5 words (handles paraphrasing)
-    if (foundIdx === -1) {
-      const firstFive = textToFind.split(/\s+/).slice(0, 5).join(" ");
-      if (firstFive.length > 6) {
-        foundIdx = story.toLowerCase().indexOf(firstFive.toLowerCase());
+    // 2. High-scoring similarity match (> 50% word overlap)
+    let bestMatch = null;
+    let maxScore = 0;
+
+    for (const [mapKey, speaker] of dialogueMap.entries()) {
+      const score = calcOverlap(clean, mapKey);
+      if (score > maxScore && score >= 0.5) {
+        maxScore = score;
+        bestMatch = speaker;
       }
     }
-    if (foundIdx === -1) return null;
 
-    // Tight 60-character window before and after quote
-    const rawPreTrim = story.substring(Math.max(0, foundIdx - 60), foundIdx).trimEnd();
-    const preText = rawPreTrim.replace(/["'“‘\s]+$/, "").replace(/[.!?]+$/, "").trim();
+    if (bestMatch) return bestMatch;
 
-    const postStart = foundIdx + textToFind.length;
-    const postText = story.substring(postStart, Math.min(story.length, postStart + 60));
-
-    const VERBS = "said|replied|asked|whispered|shouted|exclaimed|laughed|smiled|cried|muttered|nodded|gasped|thundered|cheered|called";
-
-    // High confidence 1: "..." Coco said
-    const nameVerbRe = new RegExp(
-      `^[^a-zA-Z]*([A-Za-z][a-z]+(?:\\s+(?:the\\s+)?[A-Za-z][a-z]+)*)\\s+(?:${VERBS})`, "i"
-    );
-    const nameVerbMatch = postText.match(nameVerbRe);
-    if (nameVerbMatch) {
-      const s = detectSpeaker(nameVerbMatch[1]);
-      if (s) return s;
+    // 3. Substring match fallback (for long paraphrased quotes)
+    const words = clean.split(/\s+/);
+    if (words.length >= 4) {
+      const prefix = words.slice(0, 4).join(" ");
+      for (const [mapKey, speaker] of dialogueMap.entries()) {
+        if (mapKey.startsWith(prefix)) return speaker;
+      }
     }
 
-    // High confidence 2: "..." said Coco
-    const verbNameRe = new RegExp(
-      `^[^a-zA-Z]*(?:${VERBS})\\s+(?:the\\s+)?([A-Za-z][a-z]+(?:\\s+[A-Za-z][a-z]+)*)`, "i"
-    );
-    const verbNameMatch = postText.match(verbNameRe);
-    if (verbNameMatch) {
-      const s = detectSpeaker(verbNameMatch[1]);
-      if (s) return s;
-    }
-
-    // High confidence 3: Coco said, "..."
-    const preVerbRe = new RegExp(
-      `([A-Za-z][a-z]+(?:\\s+(?:the\\s+)?[A-Za-z][a-z]+)*)\\s+(?:${VERBS})[^.!?]*$`, "i"
-    );
-    const preVerbMatch = preText.match(preVerbRe);
-    if (preVerbMatch) {
-      const s = detectSpeaker(preVerbMatch[1]);
-      if (s) return s;
-    }
-
-    // No tight explicit tag found — trust LLM output instead of guessing
     return null;
   };
 
@@ -491,7 +509,221 @@ function reattributeDialogueFromStory(scenes, story, characters = []) {
     ...sc,
     dialogue: (sc.dialogue || []).map(d => {
       if (!d || !d.text) return d;
-      const correctSpeaker = findSpeakerInStory(d.text);
+      const matched = findSpeaker(d.text);
+      if (matched && matched !== d.character?.trim().toUpperCase()) {
+        return { ...d, character: matched };
+      }
+      return d;
+    })
+  }));
+}
+
+// ── Ground-truth dialogue attribution from raw story ──────────────────────────────────────────
+//
+// Step 1: Pre-parse story to build a definitive quote→speaker map using two formats:
+//   A) Prose format:  `CharacterName said/whispered/asked, "Quote text"`
+//                    `"Quote text" CharacterName replied`
+//   B) Colon format:  `CharacterName: "Quote text"` or `CharacterName: Quote text`
+//
+// Step 2: Reattribute every screenplay dialogue line using this map as ground truth.
+// Works dynamically for ANY story and ANY character set — nothing is hardcoded.
+function buildDialogueAttributionMap(storyText, characters) {
+  const map = new Map();
+  if (!storyText || !characters || characters.length === 0) return map;
+
+  const knownChars = (characters || []).map(c => typeof c === "string" ? c : (c.name || "")).filter(Boolean);
+  const genderMap = new Map();
+  (characters || []).forEach(c => {
+    if (typeof c === "object" && c && c.name) {
+      genderMap.set(c.name.trim().toUpperCase(), c.gender || "Unspecified");
+    }
+  });
+
+  const VERBS = "said|says|replied|replies|asked|asks|whispered|whispers|shouted|shouts|exclaimed|exclaims|laughed|laughs|smiled|smiles|cried|cries|muttered|mutters|nodded|nods|gasped|gasps|thundered|thunders|cheered|cheers|called|calls|noted|notes|answered|answers|responded|responds|declared|declares|announced|announces|added|adds|echoed|echoes|bellowed|bellows|intoned|intones|chimed|chimes|murmured|murmurs|breathed|breathes|questions|questioned|activates|activated|states|stated|transmits|transmitted|broadcasts|displays|displayed|emits|emitted|projects|projected|crackles|crackled|buzzes|buzzed|rings|rang|beeps|beeped";
+
+  // Match dialogue quotes: "Quote" (double quotes only, not apostrophes in contractions)
+  const quoteRegex = /["“]([^"”]+)["”]/g;
+  let match;
+
+  while ((match = quoteRegex.exec(storyText)) !== null) {
+    const quote = match[1].trim();
+    const index = match.index;
+
+    // Bound preText to sentence boundary (do not jump past previous quotes or double newlines)
+    const rawPre = storyText.substring(0, index);
+    const lastQuoteIdx = Math.max(rawPre.lastIndexOf('"'), rawPre.lastIndexOf('”'), rawPre.lastIndexOf('\n\n'));
+    const sentencePre = lastQuoteIdx >= 0 ? rawPre.substring(lastQuoteIdx + 1) : rawPre;
+    const preTextRaw = sentencePre.substring(Math.max(0, sentencePre.length - 150));
+    const preText = preTextRaw.replace(/\b(?:lowered|raised|cleared|in|with)\s+(?:his|her|their|a|the)?\s*(?:voice|throat|breath|tone)\s*(?:and)?\b/gi, " ");
+
+    // Bound postText to sentence boundary (do not jump past next quote or newline)
+    const rawPost = storyText.substring(index + match[0].length, Math.min(storyText.length, index + match[0].length + 80));
+    const nextQuoteOrNL = Math.min(
+      rawPost.indexOf('"') === -1 ? 999 : rawPost.indexOf('"'),
+      rawPost.indexOf('“') === -1 ? 999 : rawPost.indexOf('“'),
+      rawPost.indexOf('\n') === -1 ? 999 : rawPost.indexOf('\n')
+    );
+    const postText = rawPost.substring(0, nextQuoteOrNL);
+
+    let speaker = null;
+    let maxMatchPos = -1;
+
+    const matchKnownChar = (rawName) => {
+      if (!rawName) return null;
+      const norm = rawName.trim().toLowerCase();
+      const wordsInNorm = norm.split(/\s+/);
+      if (wordsInNorm.length > 5) return null;
+
+      for (const char of knownChars) {
+        if (char.toLowerCase() === norm) return char;
+      }
+      for (const char of knownChars) {
+        const charLower = char.toLowerCase();
+        const charWords = charLower.split(/\s+/);
+        if (wordsInNorm.some(w => charWords.includes(w) && w.length > 2)) {
+          return char;
+        }
+      }
+      return null;
+    };
+
+    // 0. Self-identification inside quote (e.g. "this is Captain Miller", "I am Merlin")
+    const selfIdMatch = quote.match(/\b(?:this is|I am|my name is)\s+([A-Z][a-zA-Z.]+(?:\s+[A-Z][a-zA-Z.]+){0,2})\b/i);
+    if (selfIdMatch) {
+      const selfName = matchKnownChar(selfIdMatch[1]) || selfIdMatch[1].trim().toUpperCase();
+      if (selfName) {
+        speaker = selfName;
+        maxMatchPos = 1000;
+      }
+    }
+
+    // 1. Direct speech verb in preText
+    if (!speaker) {
+      for (const char of knownChars) {
+        const esc = char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const verbRe = new RegExp(`\\b${esc}\\b[\\s\\S]*?\\b(?:${VERBS})\\b`, "gi");
+        let m;
+        while ((m = verbRe.exec(preText)) !== null) {
+          if (m.index > maxMatchPos) {
+            maxMatchPos = m.index;
+            speaker = char;
+          }
+        }
+        const colonRe = new RegExp(`\\b${esc}\\b:`, "gi");
+        while ((m = colonRe.exec(preText)) !== null) {
+          if (m.index > maxMatchPos) {
+            maxMatchPos = m.index;
+            speaker = char;
+          }
+        }
+      }
+    }
+
+    // 2. Generic speaker match in preText
+    if (!speaker) {
+      const genericSpeakerRe = new RegExp(`([A-Z][a-zA-Z.]+(?:\\s+[A-Z][a-zA-Z.]+){0,2})\\b[^.!?]{0,40}?\\b(?:${VERBS})\\b`, "gi");
+      let gm;
+      while ((gm = genericSpeakerRe.exec(preText)) !== null) {
+        const matchedChar = matchKnownChar(gm[1]);
+        if (matchedChar && gm.index > maxMatchPos) {
+          maxMatchPos = gm.index;
+          speaker = matchedChar;
+        }
+      }
+    }
+
+    // 3. Pronoun speech verb in preText
+    if (!speaker) {
+      const resolvePronounSpeaker = (preTxt, quoteIdx, pronounRe, genderWanted) => {
+        let best = { pos: -1, char: null };
+        let pm;
+        while ((pm = pronounRe.exec(preTxt)) !== null) {
+          const storyBeforeQuote = storyText.substring(0, quoteIdx);
+          let lastPos = -1, lastChar = null;
+          for (const cName of knownChars) {
+            const g = genderMap.get(cName.toUpperCase());
+            if (g && g !== "Unspecified" && g !== genderWanted) continue;
+            const esc = cName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const matches = [...storyBeforeQuote.matchAll(new RegExp(`\\b${esc}\\b`, "gi"))];
+            if (matches.length) {
+              const pos = matches[matches.length - 1].index;
+              if (pos > lastPos) { lastPos = pos; lastChar = cName; }
+            }
+          }
+          if (lastChar && pm.index > best.pos) best = { pos: pm.index, char: lastChar };
+        }
+        return best;
+      };
+
+      const femaleMatch = resolvePronounSpeaker(preText, index, new RegExp(`\\b(she|her)\\b[\\s\\S]*?\\b(?:${VERBS})\\b`, "gi"), "Female");
+      if (femaleMatch.char && femaleMatch.pos > maxMatchPos) {
+        maxMatchPos = femaleMatch.pos;
+        speaker = femaleMatch.char;
+      }
+
+      const maleMatch = resolvePronounSpeaker(preText, index, new RegExp(`\\b(he|him|his)\\b[\\s\\S]*?\\b(?:${VERBS})\\b`, "gi"), "Male");
+      if (maleMatch.char && maleMatch.pos > maxMatchPos) {
+        maxMatchPos = maleMatch.pos;
+        speaker = maleMatch.char;
+      }
+    }
+
+    // 4. Direct post-speech tag in postText
+    if (!speaker) {
+      for (const char of knownChars) {
+        const esc = char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const postVerbRe = new RegExp(`^[^a-zA-Z]*\\b(?:${VERBS})\\b\\s+(?:the\\s+)?\\b${esc}\\b`, "i");
+        const postNameRe = new RegExp(`^[^a-zA-Z]*\\b${esc}\\b\\s+(?:the\\s+)?\\b(?:${VERBS})\\b`, "i");
+        if (postVerbRe.test(postText) || postNameRe.test(postText)) {
+          speaker = char;
+          break;
+        }
+      }
+    }
+
+    if (speaker) {
+      const cleanKey = quote.toLowerCase().replace(/[.!?,'"\u201C\u201D]+$/g, "").trim();
+      map.set(cleanKey, speaker);
+    }
+  }
+
+  return map;
+}
+
+// ── LEGACY FALLBACK: only used when Claude is entirely unavailable ──
+function reattributeDialogueFromStoryLegacy(scenes, story, characters = []) {
+  if (!story || !scenes || scenes.length === 0) return scenes;
+
+  // Build ground-truth map from story text using full character objects
+  const attributionMap = buildDialogueAttributionMap(story, characters);
+
+  const findSpeakerForLine = (dialogueText) => {
+    if (!dialogueText || dialogueText.length < 2) return null;
+
+    const cleanText = dialogueText.trim().replace(/[.!?,]+$/, "").toLowerCase().trim();
+
+    // 1. Exact match in attribution map
+    if (attributionMap.has(cleanText)) return attributionMap.get(cleanText);
+
+    // 2. Partial key match (first 6 words)
+    const partialKey = cleanText.split(/\s+/).slice(0, 6).join(" ");
+    if (partialKey.length > 5 && attributionMap.has(partialKey)) return attributionMap.get(partialKey);
+
+    // 3. Scan all map keys for substring overlap (handles slight paraphrasing)
+    for (const [key, speaker] of attributionMap.entries()) {
+      if (key.length > 8 && cleanText.includes(key.substring(0, Math.min(key.length, 20)))) {
+        return speaker;
+      }
+    }
+
+    return null; // No match — trust LLM output
+  };
+
+  return scenes.map(sc => ({
+    ...sc,
+    dialogue: (sc.dialogue || []).map(d => {
+      if (!d || !d.text) return d;
+      const correctSpeaker = findSpeakerForLine(d.text);
       if (correctSpeaker && correctSpeaker !== d.character?.trim().toUpperCase()) {
         console.log(`[reattribute] "${d.text.substring(0, 40)}" ${d.character} → ${correctSpeaker}`);
         return { ...d, character: correctSpeaker };
@@ -505,20 +737,19 @@ function reattributeDialogueFromStory(scenes, story, characters = []) {
 // Guarantees zero downtime even when AI provider rate limit is exceeded.
 // Uses LLM dialogue extraction with the exact user-specified prompt;
 // falls back to regex attribution only if the LLM call itself fails.
-async function buildFallbackScreenplayAndCharacters(story, existingChars, isMarketing, apiKey) {
+async function buildFallbackScreenplayAndCharacters(story, existingChars, isMarketing) {
   let characters = (existingChars && existingChars.length > 0) ? existingChars : extractCharactersLocally(story);
 
   let dialoguePairs = [];
 
-  // ── Step 1: LLM-based dialogue extraction (exact user-specified prompt) ───────
+  // ── Step 1: Claude-based dialogue extraction ─────────────────────────────────
   let llmSucceeded = false;
-  if (apiKey) {
+  if (process.env.ANTHROPIC_API_KEY) {
     const extractPrompt = `Read this story and extract every line of dialogue. For each line, identify exactly which character said it, using context and conversational flow — not just nearby names (a character's name may appear in someone else's line, e.g. being addressed directly, so use who is actually speaking, not just who is mentioned).
 
 Return ONLY valid JSON in this exact format, no other text:
 [
-  {"character": "Coco", "line": "I wish I could help."},
-  {"character": "The bigger clouds", "line": "You're too small to make a difference!"}
+  {"character": "Character Name", "line": "Dialogue line text."}
 ]
 
 Story:
@@ -527,7 +758,7 @@ ${story}
 """`;
 
     try {
-      const raw = await callGemini(extractPrompt, apiKey);
+      const raw = await callClaude(extractPrompt, "You are a dialogue extraction expert. Return ONLY valid JSON, no prose.");
       if (raw) {
         const cleaned = raw
           .replace(/^```(?:json)?\s*/i, "")
@@ -569,40 +800,81 @@ ${story}
       const postText = story.substring(quoteEnd, Math.min(story.length, quoteEnd + 120));
 
       const knownChars = (characters || []).map(c => c.name?.trim().toUpperCase()).filter(Boolean);
+
+      // Build ground-truth attribution for this quote from preText + postText
+      const SPEECH_VERBS_FB = "said|replied|asked|whispered|shouted|exclaimed|laughed|smiled|cried|muttered|nodded|gasped|thundered|cheered|called|answered|responded|declared|announced|added|echoed|bellowed|intoned|chimed|murmured|breathed";
+
       const detectSpeaker = (txt) => {
         if (!txt) return null;
+        // Strip possessive 's to handle "woman's voice echoed" → "woman voice echoed"
+        const stripped = txt.replace(/'s\b/gi, " ");
+        // Direct character name match
         for (const cName of knownChars) {
           if (!cName) continue;
           const esc = cName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          if (new RegExp(`\\b${esc}\\b`, "i").test(txt)) return cName;
+          if (new RegExp(`\\b${esc}\\b`, "i").test(stripped)) return cName;
         }
         for (const cName of knownChars) {
           if (!cName) continue;
           const firstWord = cName.split(/\s+/)[0];
           if (firstWord.length > 2) {
             const esc = firstWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            if (new RegExp(`\\b${esc}\\b`, "i").test(txt)) return cName;
+            if (new RegExp(`\\b${esc}\\b`, "i").test(stripped)) return cName;
           }
+        }
+        return null;
+      };
+
+      // Pronoun resolver: she/her → first female-pronoun character, he/him → first male
+      const resolvePronouns = (txt) => {
+        if (!txt) return null;
+        if (/\b(she|her)\b/i.test(txt)) {
+          // Find the character referenced by female pronoun — search preceding story text
+          const storyBefore = story.substring(0, item.index);
+          for (const cName of knownChars) {
+            const esc = cName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            if (new RegExp(`\\b${esc}\\b`, "i").test(storyBefore)) return cName;
+          }
+          return knownChars[0] || null;
+        }
+        if (/\b(he|him|his)\b/i.test(txt)) {
+          const storyBefore = story.substring(0, item.index);
+          // Find last-mentioned male character
+          let lastPos = -1, lastChar = null;
+          for (const cName of knownChars) {
+            const esc = cName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const matches = [...storyBefore.matchAll(new RegExp(`\\b${esc}\\b`, "gi"))];
+            if (matches.length > 0) {
+              const pos = matches[matches.length - 1].index;
+              if (pos > lastPos) { lastPos = pos; lastChar = cName; }
+            }
+          }
+          return lastChar;
         }
         return null;
       };
 
       let speaker = "";
 
-      // 1. Check postText first (e.g. "Finn said")
+      // 1. Check postText first (e.g. "Finn said" / "said Finn")
       const postSpeechMatch = postText.match(
-        /\b(?:said|replied|asked|whispered|shouted|exclaimed|laughed|smiled|cried|muttered|nodded|gasped|thundered|cheered|called)\s+(?:the\s+)?([A-Za-z\s]+)/i
+        /\b(?:said|replied|asked|whispered|shouted|exclaimed|laughed|smiled|cried|muttered|nodded|gasped|thundered|cheered|called|answered|echoed|murmured|bellowed)\s+(?:the\s+)?([A-Za-z\s]+)/i
       );
       if (postSpeechMatch) {
         speaker = detectSpeaker(postSpeechMatch[0]) || "";
       }
 
-      // 2. Fall back to preText if postText gave no answer
+      // 2. Check preText for direct character name + verb
       if (!speaker) {
         speaker = detectSpeaker(preText) || "";
       }
 
-      // 3. Fallback: UNKNOWN (never infer or guess)
+      // 3. Pronoun resolution from preText (she whispered / he said)
+      if (!speaker) {
+        speaker = resolvePronouns(preText) || "";
+      }
+
+      // 4. Fallback: UNKNOWN (never infer or guess)
       if (!speaker) {
         speaker = "UNKNOWN";
       }
@@ -697,78 +969,110 @@ function cleanDialogueText(raw) {
 function extractCharactersLocally(story) {
   const ignoreWords = new Set([
     "ONCE", "UPON", "THE", "A", "AN", "IN", "ON", "AT", "TO", "THEY", "HE", "SHE", "IT", "WE", "YOU", "I",
-    "THEN", "WHEN", "AS", "BUT", "SO", "IF", "WHAT", "HOW", "WHY", "LOOK", "OH", "THERE", "WAS", "HERE",
-    "FADE", "INT", "EXT", "DAY", "NIGHT", "CUT", "SCENE", "END", "START", "ONE", "DAY", "SOME", "MANY",
-    "ALL", "EVERY", "THIS", "THAT", "THESE", "THOSE", "AFTER", "BEFORE", "WHILE", "UNTIL", "WITH", "FROM",
-    "VILLAGE", "CLOUDS", "CLOUD", "SUN", "SKY", "RAIN", "WATER", "LAND", "EARTH", "FLOWER", "FLOWERS",
+    "THEN", "WHEN", "AS", "BUT", "SO", "IF", "WHAT", "HOW", "WHY", "WHO", "WHERE", "WHICH", "WHOM", "LOOK", "OH", "THERE", "WAS", "HERE",
+    "AND", "OR", "SO", "THEIR", "THEIRS", "ITS", "THIS", "THAT", "THESE", "THOSE", "AFTER", "BEFORE", "WHILE", "UNTIL", "WITH", "FROM",
+    "FADE", "INT", "EXT", "DAY", "NIGHT", "CUT", "SCENE", "END", "START", "ONE", "SOME", "MANY",
+    "ALL", "EVERY", "VILLAGE", "CLOUDS", "CLOUD", "SUN", "SKY", "RAIN", "WATER", "LAND", "EARTH", "FLOWER", "FLOWERS",
     "TREE", "TREES", "PEOPLE", "PARK", "STREET", "HOUSE", "TOWN", "CITY", "FOREST", "MOUNTAIN", "OCEAN",
     "WORLD", "MORNING", "EVENING", "TIME", "WAY", "THING", "THINGS", "PLACE", "PLACES", "STORY", "FEET",
-    "HANDS", "EYES", "FACE", "HEAD", "HEART", "SOUL", "VOICE", "NAME", "LITTLE", "BIG", "GREAT",
-    "OLD", "YOUNG", "NEW", "FIRST", "LAST", "MAIN", "OTHER", "ANOTHER", "MUCH", "LONG", "SHORT",
-    "HIGH", "LOW", "HOT", "COLD", "DRY", "WET", "DARK", "LIGHT", "CLEAR", "BRIGHT", "HERO",
-    "SMILED", "LAUGHED", "MUTTERED", "GIGGLED", "WHISPERED", "SHOUTED", "SAID", "REPLIED", "NODDED", "EXCLAIMED"
+    "HANDS", "EYES", "FACE", "HEAD", "HEART", "SOUL", "VOICE", "NAME", "HERO", "FOLLOW", "CAN",
+    "COULD", "WOULD", "WILL", "SHALL", "SHOULD", "MAY", "MIGHT", "MUST", "DO", "DOES", "DID", "DON'T",
+    "SMILED", "LAUGHED", "MUTTERED", "GIGGLED", "WHISPERED", "SHOUTED", "SAID", "REPLIED", "NODDED", "EXCLAIMED",
+    // Common dialogue/sentence-opening words that look like proper nouns when capitalised
+    "CURIOUS", "SUDDENLY", "YOUR", "BECAUSE", "PERHAPS", "ALTHOUGH", "HOWEVER", "MEANWHILE", "THEREFORE",
+    "JUST", "ONLY", "EVEN", "STILL", "ALREADY", "YET", "SOON", "NEVER", "ALWAYS", "SOMETIMES",
+    "SOMETHING", "NOTHING", "EVERYTHING", "SOMEONE", "NOBODY", "ANYONE", "EVERYONE"
+  ]);
+
+  const COMMON_ADJECTIVES_LOCAL = new Set([
+    "SMALL", "LITTLE", "BIG", "LARGE", "GREAT", "OLD", "NEW", "YOUNG", "ANCIENT", "BRIGHT", "DARK", "LIGHT",
+    "GLOWING", "MYSTERIOUS", "MAGICAL", "STRANGE", "BEAUTIFUL", "UGLY", "TALL", "SHORT", "THIN", "FAT",
+    "RAINY", "SUNNY", "COLD", "HOT", "WET", "DRY", "WARM", "COOL", "SILENT", "LOUD", "SOFT", "HARD",
+    "BRAVE", "WISE", "EVIL", "GOOD", "HAPPY", "SAD", "ANGRY", "SCARED", "SURPRISED", "HOPEFUL", "FEARFUL",
+    "POINTED", "FOUND", "PICKED", "APPEARED", "WALKED", "STOOD", "SAT", "LOOKED", "TURNED", "SMILED",
+    "SUDDENLY", "SLOWLY", "QUICKLY", "SOFTLY", "LOUDLY", "CAREFULLY", "FINALLY", "ALREADY", "NEARLY",
+    "TOWARD", "UNDER", "ABOVE", "BENEATH", "BESIDE", "INSIDE", "OUTSIDE", "BEYOND", "THROUGH", "BETWEEN",
+    // Past-tense action verbs — never valid character names
+    "TOUCHED", "HELD", "STEPPED", "MOVED", "KNELT", "RAN", "FELL", "CLIMBED", "JUMPED", "REACHED",
+    "OPENED", "CLOSED", "GRABBED", "PUSHED", "PULLED", "LIFTED", "DROPPED", "PLACED", "CARRIED", "THREW",
+    "NOTICED", "HEARD", "FELT", "KNEW", "THOUGHT", "REALIZED", "DECIDED", "REMEMBERED", "DISCOVERED",
+    "HOLDING", "STARING", "WAITING", "WATCHING", "RUNNING", "STANDING", "SITTING", "KNEELING",
+    "ECHOED", "ANSWERED", "STATED", "CONTINUED", "CALLED", "REPLIED", "WHISPERED", "SHOUTED"
   ]);
 
   const candidates = [];
-
-  // 1. Dialogue cues before speech verbs or quotes/colons
-  const speakerRegex = /\b([A-Z][A-Za-z0-9_\s]{1,35}?)\s*(?:says|said|replied|replies|shouted|shouts|asked|asks|cried|cries|yelled|yells|muttered|mutters|whispered|whispers|smiled|smiles|laughed|laughs|giggled|giggles|nodded|nods|exclaimed|exclaims|called|calls|:)/gi;
-  let spMatch;
-  while ((spMatch = speakerRegex.exec(story)) !== null) {
-    const rawCandidate = spMatch[1].trim();
-    const { name: cleanCandidate } = cleanSpeakerName(rawCandidate);
-    if (cleanCandidate && !ignoreWords.has(cleanCandidate.toUpperCase())) {
-      candidates.push(cleanCandidate);
-    }
-  }
-
-  // 2. Character names mentioned after "named" / "known as" (e.g. "cloud named Coco")
-  // Do not match preposition phrases like "called out into"
-  const namedRegex = /\b(?:named|known as)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b/g;
-  let namedMatch;
-  while ((namedMatch = namedRegex.exec(story)) !== null) {
-    const { name: cleanCandidate } = cleanSpeakerName(namedMatch[1].trim());
-    if (cleanCandidate) candidates.push(cleanCandidate);
-  }
-
-  // 3. Known multi-word character names like "Bigger Clouds" or "Little Cloud"
-  if (/bigger\s+clouds?/i.test(story) || /big\s+clouds?/i.test(story)) candidates.push("BIGGER CLOUDS");
-  if (/coco\b/i.test(story) || /little\s+cloud/i.test(story)) candidates.push("COCO");
-
-  // Sanitize and filter unique valid names
-  const uniqueCleanNames = [];
   const seen = new Set();
 
-  candidates.forEach(raw => {
-    const { name: clean } = cleanSpeakerName(raw);
-    if (clean && clean.length > 1 && !ignoreWords.has(clean) && !seen.has(clean)) {
-      seen.add(clean);
-      uniqueCleanNames.push(clean);
+  // Strip dialogue quotes to avoid picking up capitalized first words of dialogue
+  // Handle ASCII " and curly " " quotes, and markdown **bold** formatting
+  const narrativeOnly = story
+    .replace(/\*\*"[^"]*"\*\*/g, "")          // markdown **"..."** bold dialogue
+    .replace(/\*\*"[^"]*"\*\*/g, "")          // markdown **"..."** curly bold dialogue
+    .replace(/"[^"]*"/g, "")                   // ASCII "..."
+    .replace(/\u201C[^\u201D]*\u201D/g, "")   // curly "..."
+    .replace(/\*\*[^*]+\*\*/g, "");           // any remaining markdown bold
+
+  // 1. Find Proper Nouns capitalized in narrative text (e.g. Aira)
+  const propNouns = narrativeOnly.match(/\b[A-Z][a-z]{2,20}\b/g) || [];
+  propNouns.forEach(name => {
+    const upper = name.toUpperCase();
+    if (!ignoreWords.has(upper) && !COMMON_ADJECTIVES_LOCAL.has(upper) && !seen.has(upper)) {
+      seen.add(upper);
+      candidates.push(upper);
     }
   });
 
+  // 2. Find core animals / speaker nouns / entity nouns (e.g. "fox", "wizard", "sailor", "voice", "stranger")
+  const speakerNouns = [
+    "FOX", "WIZARD", "KNIGHT", "NARRATOR", "KING", "QUEEN", "PRINCESS", "PRINCE", "DRAGON", "ROBOT",
+    "BEAR", "WOLF", "LION", "OWL", "VOICE", "SHADOW", "STRANGER", "SPIRIT", "MAN", "WOMAN", "GHOST",
+    "CREATURE", "ELDER", "BEAST", "GUARDIAN", "GUIDE", "TEACHER", "STUDENT", "CHILD", "FAIRY", "ALCHEMIST",
+    "SAILOR", "CAPTAIN", "PIRATE", "TRAVELER", "WANDERER", "SEEKER", "HUNTER", "HERMIT", "MESSENGER", "WARRIOR",
+    "KEEPER", "GUARD", "SOLDIER", "OFFICER", "DOCTOR", "NURSE", "PRIEST", "MONK", "SHERIFF", "DETECTIVE",
+    "WITCH", "SORCERER", "ORACLE", "PROPHET", "REBEL", "EXILE", "SCOUT", "RANGER", "ARCHER", "BLACKSMITH"
+  ];
+  speakerNouns.forEach(noun => {
+    if (new RegExp(`\\b${noun}\\b`, "i").test(story) && !seen.has(noun)) {
+      // Special check for VOICE: don't extract VOICE if it only appears in possessive/manner phrases like "his voice", "her voice", "my voice"
+      if (noun === "VOICE") {
+        const isStandaloneSubject = /\b(?:a|an|the|soft|dark|deep|mysterious|distant|unknown|woman's|man's)\s+voice\b/i.test(story);
+        const isOnlyPossessive = /\b(?:his|her|my|your|their|our)\s+voice\b/i.test(story) && !isStandaloneSubject;
+        if (isOnlyPossessive) return;
+      }
+      seen.add(noun);
+      candidates.push(noun);
+    }
+  });
+
+  // 3. Dynamic speech entity extraction: match nouns that directly precede speech verbs (tight match)
+  // e.g. "voice echoed" / "sailor replied" / "woman's voice echoed" → VOICE/SAILOR/WOMAN
+  // Excluded: "touched ... whispered" (TOUCHED is now in COMMON_ADJECTIVES_LOCAL blocklist)
+  const SPEECH_VERBS_REGEX = "said|replied|asked|whispered|shouted|exclaimed|laughed|smiled|cried|muttered|nodded|gasped|thundered|cheered|called|answered|responded|declared|announced|added|echoed|bellowed|intoned|chimed|murmured";
+  const speechEntityRegex = new RegExp(`(?:a|an|the|soft|dark|mysterious|old|young|quiet|brave)?\\s*([A-Za-z]{3,20})\\b(?:'s\\s+[A-Za-z]+)?\\s+(?:${SPEECH_VERBS_REGEX})\\b`, "gi");
+  let seMatch;
+  while ((seMatch = speechEntityRegex.exec(narrativeOnly)) !== null) {
+    const nounCandidate = seMatch[1].toUpperCase();
+    if (!ignoreWords.has(nounCandidate) && !COMMON_ADJECTIVES_LOCAL.has(nounCandidate) && !seen.has(nounCandidate)) {
+      seen.add(nounCandidate);
+      candidates.push(nounCandidate);
+    }
+  }
+
   // Default fallback if no character names found
-  if (uniqueCleanNames.length === 0) {
-    const propMatch = story.match(/\b[A-Z][a-z]{2,20}\b/g);
-    if (propMatch && propMatch.length > 0) {
-      const valid = propMatch.find(w => !ignoreWords.has(w.toUpperCase()));
-      if (valid) uniqueCleanNames.push(valid.toUpperCase());
-    }
-    if (uniqueCleanNames.length === 0) {
-      uniqueCleanNames.push("PROTAGONIST");
-    }
+  if (candidates.length === 0) {
+    candidates.push("PROTAGONIST");
   }
 
   const storyLower = story.toLowerCase();
 
-  return uniqueCleanNames.map((name, idx) => {
+  return candidates.map((name, idx) => {
     const nameLower = name.toLowerCase();
     const sentences = storyLower.split(/[.!?]+/).filter(s => nameLower && s.includes(nameLower));
     const charContext = sentences.join(" ");
 
     let gender = "Unspecified";
     if (charContext) {
-      const hasMale   = /\b(he|him|his|boy|man|male|brother|father|son|king|prince|mr)\b/.test(charContext);
+      const hasMale = /\b(he|him|his|boy|man|male|brother|father|son|king|prince|mr)\b/.test(charContext);
       const hasFemale = /\b(she|her|hers|girl|woman|female|sister|mother|daughter|queen|princess|ms|mrs)\b/.test(charContext);
       if (hasMale && !hasFemale) gender = "Male";
       else if (hasFemale && !hasMale) gender = "Female";
@@ -794,14 +1098,27 @@ function extractCharactersLocally(story) {
       appearance = "A key character in the story.";
     }
 
+    let clothingLocal = "";
+    const clothCtxLocal = (sentences || []).join(" ").toLowerCase();
+    const clothMatchLocal = clothCtxLocal.match(/\b(wearing|clad in|dressed in|robe|cloak|suit|armor|jacket|hat|boots|tunic|dress|attire|garb|uniform|coat)\b[^.!?]{0,40}/i);
+    clothingLocal = clothMatchLocal ? clothMatchLocal[0].charAt(0).toUpperCase() + clothMatchLocal[0].slice(1) : "Not described in the original story.";
+
+    const traitWordsLocal = ["brave","wise","curious","gentle","stubborn","kind","fierce","cautious","determined","playful","loyal","mysterious","bold","persistent","observant","clever","compassionate"];
+    const foundTraitsLocal = traitWordsLocal.filter(t => charContext.includes(t));
+    const personalityLocal = foundTraitsLocal.length > 0
+      ? `${foundTraitsLocal.slice(0,3).map(t => t[0].toUpperCase()+t.slice(1)).join(", ")} — shaped by the story's events.`
+      : (idx === 0
+          ? "Driven by the story's central conflict, revealed through choices and dialogue."
+          : "Defined by how they interact with the other characters in the story.");
+
     return {
       name,
       role: idx === 0 ? "Protagonist" : "Supporting",
       age,
       gender,
       appearance,
-      clothing: "Unspecified",
-      personality: idx === 0 ? "Determined and brave character." : "Supporting character in the story.",
+      clothing: clothingLocal,
+      personality: personalityLocal,
       emotion: "hopeful"
     };
   });
@@ -818,7 +1135,7 @@ function cleanSpeakerName(raw) {
     "MY", "YOUR", "HIS", "HER", "OUR", "THESE", "THOSE", "THE", "A", "AN", "THIS", "THAT",
     "HE", "SHE", "IT", "THEY", "WE", "YOU", "I", "HERO", "HOUSE", "TOWN", "CITY", "STORY", "WATER", "HEAT",
     "OUT", "SOFTLY", "LOUDLY", "GENTLY", "WARMLY", "QUIETLY", "SLOWLY", "QUICKLY", "AWAY", "BACK", "UP", "DOWN",
-    "INTO", "DARK", "DISTANCE", "VOICE", "UNMENTIONED", "FLOATED", "CALLED", "INTO THE DARK"
+    "INTO", "UNMENTIONED", "FLOATED", "CALLED"
   ]);
 
   if (stopWords.has(text.toUpperCase())) {
@@ -864,8 +1181,9 @@ function sanitizeName(name) {
   return cleanWords.join(" ");
 }
 
-// Remove any HTML/markdown formatting Gemini adds despite instructions
+// Remove any HTML/markdown formatting added despite instructions
 function cleanScreenplay(text) {
+  if (!text || typeof text !== "string") return "";
   return text
     .replace(/<center>\s*([^<]+?)\s*<\/center>/gi, "$1")
     .replace(/^>\s*/gm, "")

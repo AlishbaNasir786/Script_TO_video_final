@@ -27,6 +27,7 @@ export default function Script() {
   }
 
   function cleanLine(text) {
+    if (!text || typeof text !== "string") return "";
     return text
       .replace(/<center>\s*([^<]+?)\s*<\/center>/gi, "$1")
       .replace(/^>\s*/g, "")

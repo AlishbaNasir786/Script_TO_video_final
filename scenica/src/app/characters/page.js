@@ -2,6 +2,108 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
+// Helper to sanitize extracted description snippets by removing markdown formatting,
+// quotes, dialogue verbs, and trailing punctuation.
+function cleanDescriptionText(str) {
+  if (!str) return "";
+  const cleaned = str
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/[`_]/g, "")
+    .replace(/["“'”].*$/g, "")
+    .replace(/\b(says|said|replied|replies|asked|asks|whispered|whispers|shouted|shouts|exclaimed|exclaims|stated|states|noted|notes|added|adds)\b.*$/i, "")
+    .replace(/[:,;-]\s*$/g, "")
+    .trim();
+  return cleaned ? cleaned.charAt(0).toUpperCase() + cleaned.slice(1) : "";
+}
+
+// ── Dynamic story-derived detail extraction helper ──────────────────────────────
+// Mines original story text for appearance, clothing, personality, and gender signal
+// so fallback & sync paths use rich story context instead of generic static placeholder strings.
+function inferCharacterDetails(name, role, storyText) {
+  const nameLower = (name || "").toLowerCase();
+  const lower = (storyText || "").toLowerCase();
+
+  const sentences = lower.split(/[.!?]+/).filter(s => nameLower && s.includes(nameLower));
+  const context = sentences.join(" ");
+
+  // 1. Gender inference from story pronouns or entity names
+  let gender = "Unspecified";
+  if (context || nameLower) {
+    const hasFemale = /\b(she|her|hers|woman|girl|female|lady|mother|sister|daughter|queen|princess|ms|mrs)\b/i.test(context);
+    const hasMale = /\b(he|him|his|man|boy|male|gentleman|father|brother|son|king|prince|mr)\b/i.test(context);
+    if (hasFemale && !hasMale) gender = "Female";
+    else if (hasMale && !hasFemale) gender = "Male";
+    else if (/\b(system|voice|ai|hologram|machine|intercom|entity)\b/i.test(nameLower || context)) gender = "Synthetic Entity";
+  }
+
+  // 2. Appearance: extract physical descriptions or visual traits, stripping quotes & markdown
+  let appearance = "";
+  if (name && storyText) {
+    const escName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const descMatch = storyText.match(
+      new RegExp(`\\b${escName}\\s+(?:was|is)\\s+([^.!?]{5,60})`, "i")
+    );
+    if (descMatch) {
+      appearance = cleanDescriptionText(descMatch[1]);
+    }
+  }
+
+  if (!appearance && context) {
+    const adjMatch = context.match(/\b(tall|short|old|young|small|large|glowing|weathered|gentle|fierce|quiet|elderly|slender|broad-shouldered|hooded|robed|radiant|shadowy|mysterious)\b[^.!?]{0,40}/i);
+    if (adjMatch) {
+      appearance = cleanDescriptionText(adjMatch[0]);
+    }
+  }
+
+  if (!appearance) {
+    appearance = role === "Protagonist"
+      ? "The central figure of the story, described through their choices and actions."
+      : "A key supporting presence in the story, defined through their interactions.";
+  }
+
+  // 3. Clothing: garment or attire references near character name
+  let clothing = "";
+  if (context) {
+    const clothMatch = context.match(/\b(wearing|clad in|dressed in|robe|cloak|suit|armor|jacket|hat|boots|tunic|dress|attire|garb|vestment|uniform)\b[^.!?]{0,40}/i);
+    if (clothMatch) {
+      clothing = clothMatch[0].charAt(0).toUpperCase() + clothMatch[0].slice(1);
+    }
+  }
+  if (!clothing) {
+    clothing = "Unspecified — not described in the original story.";
+  }
+
+  // 4. Personality: rich narrative trait inference based on story actions
+  const traitWords = ["brave", "wise", "curious", "gentle", "stubborn", "kind", "fierce", "cautious", "determined", "playful", "loyal", "mysterious", "quiet", "bold", "persistent", "observant", "inquisitive", "analytical", "protective"];
+  const foundTraits = traitWords.filter(t => context.includes(t));
+
+  let personality = "";
+  const isArchivist = /\b(archivist|keeper|librarian|scholar|scientist|elder|guardian|master)\b/i.test(nameLower || context);
+
+  if (foundTraits.length > 0) {
+    const traitStr = foundTraits.map(t => t[0].toUpperCase() + t.slice(1)).join(", ");
+    personality = isArchivist
+      ? `${traitStr}, knowledgeable, and secretive; safeguards ancient records and speaks with quiet authority.`
+      : `${traitStr} and observant; shaped by their key actions in the story's events.`;
+  } else {
+    const asksQuestions = /\b(asked|asks|wondered|wonders|questioned|questions|inquired|inquires)\b/i.test(context);
+    const givesAnswers = /\b(replied|replies|answered|answers|explained|explains|stated|states)\b/i.test(context);
+
+    if (isArchivist || (givesAnswers && !asksQuestions)) {
+      personality = "Mysterious, knowledgeable, and secretive; safeguards ancient records and oversees story developments.";
+    } else if (asksQuestions) {
+      personality = "Curious and inquisitive; actively questions unexplained events and seeks underlying truths.";
+    } else {
+      personality = role === "Protagonist"
+        ? "Driven by the story's central conflict, revealed through their key choices."
+        : "Plays a distinct role in unfolding events, defined by how they interact with other characters.";
+    }
+  }
+
+  return { appearance, clothing, personality, gender };
+}
+
 // ─── Cinematic SVG Avatar — 4-Color Palette System ──────────────────────────────
 function CharacterAvatar({ char, size = 220 }) {
   const isFemale = (char.gender || "").toLowerCase().includes("female");
@@ -111,16 +213,45 @@ export function PlayerAvatar({ char, size = 56 }) {
 }
 
 // ─── Shared dialogue extractor ─────────────────────────────────────────────────
-function getCharacterDialogue(screenplay, characterName, scenes) {
-  if (scenes && Array.isArray(scenes)) {
-    const charNameNorm = characterName.trim().toUpperCase();
-    const dialogues = [];
+function getCharacterDialogue(screenplay, characterName, scenes, dialogueRows = []) {
+  const charNameNorm = (characterName || "").trim().toUpperCase();
+  const dialogues = [];
 
+  // 1. Check dialogueRows (has extracted & AI-enhanced lines for this character)
+  if (dialogueRows && Array.isArray(dialogueRows) && dialogueRows.length > 0) {
+    dialogueRows.forEach(row => {
+      const rowChar = (row.character || "").trim().toUpperCase();
+      if (
+        rowChar === charNameNorm ||
+        (rowChar.length > 2 && charNameNorm.includes(rowChar)) ||
+        (charNameNorm.length > 2 && rowChar.includes(charNameNorm))
+      ) {
+        dialogues.push({
+          text: row.enhanced || row.original,
+          original: row.original,
+          emotion: row.emotion || "neutral",
+          parenthetical: row.parenthetical || "",
+          isEnhanced: row.status === "done" && !!row.enhanced
+        });
+      }
+    });
+  }
+
+  // 2. Check scenes fallback
+  if (dialogues.length === 0 && scenes && Array.isArray(scenes)) {
     scenes.forEach(sc => {
       (sc.dialogue || []).forEach(d => {
-        if (d.character && d.character.trim().toUpperCase() === charNameNorm && d.text) {
+        const dChar = (d.character || "").trim().toUpperCase();
+        if (
+          dChar && (
+            dChar === charNameNorm ||
+            (dChar.length > 2 && charNameNorm.includes(dChar)) ||
+            (charNameNorm.length > 2 && dChar.includes(charNameNorm))
+          ) && d.text
+        ) {
           dialogues.push({
             text: d.text,
+            original: d.text,
             emotion: d.emotion || "neutral",
             parenthetical: d.parenthetical || "",
             isEnhanced: d.isEnhanced || false
@@ -128,91 +259,54 @@ function getCharacterDialogue(screenplay, characterName, scenes) {
         }
       });
     });
-
-    const seen = new Set();
-    return dialogues.filter(d => {
-      const key = d.text.trim().toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
   }
 
-  if (!screenplay) return [];
+  // 3. Fallback: parse raw screenplay text
+  if (dialogues.length === 0 && screenplay) {
+    const cleaned = screenplay
+      .replace(/<center>\s*([^<]+?)\s*<\/center>/gi, "$1")
+      .replace(/^>\s*/gm, "")
+      .replace(/<[^>]+>/g, "");
 
-  const cleaned = screenplay
-    .replace(/<center>\s*([^<]+?)\s*<\/center>/gi, "$1")
-    .replace(/^>\s*/gm, "")
-    .replace(/<[^>]+>/g, "");
+    const lines = cleaned.split("\n");
+    const nameUpper = characterName.toUpperCase().trim();
 
-  const lines = cleaned.split("\n");
-  const dialogues = [];
-  const nameUpper = characterName.toUpperCase().trim();
-
-  function matchesCue(rawCue) {
-    const c = rawCue.replace(/\s*\([^)]+\)\s*/g, "").replace(/:$/, "").trim();
-    return c === nameUpper;
-  }
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    const lineUpper = line.toUpperCase().trim();
-
-    const isCue =
-      line.length < 60 &&
-      matchesCue(lineUpper) &&
-      !line.match(/^(INT\.|EXT\.|FADE|CUT TO|SMASH|DISSOLVE)/i);
-
-    if (!isCue) continue;
-
-    let j = i + 1;
-    while (j < lines.length && !lines[j].trim()) j++;
-
-    let parenthetical = "";
-    if (j < lines.length && lines[j].trim().startsWith("(") && lines[j].trim().endsWith(")")) {
-      parenthetical = lines[j].trim().replace(/[()]/g, "").trim();
-      j++;
-      while (j < lines.length && !lines[j].trim()) j++;
+    function matchesCue(rawCue) {
+      if (!rawCue || typeof rawCue !== "string") return false;
+      const c = rawCue.replace(/\s*\([^)]+\)\s*/g, "").replace(/:$/, "").trim();
+      return c === nameUpper || (c.length > 2 && nameUpper.includes(c));
     }
 
-    const parts = [];
-    while (j < lines.length) {
-      const dLine = lines[j].trim();
-
-      if (!dLine) { j++; if (parts.length > 0) break; continue; }
-      if (dLine.match(/^(INT\.|EXT\.|FADE|CUT TO)/i)) break;
-      if (dLine.match(/^\[EMOTION:/i)) { j++; continue; }
-
-      const dUpper = dLine.toUpperCase();
-      if (dLine.length < 60 && dLine === dUpper && dLine.match(/^[A-Z]/) &&
-        !dLine.startsWith("(") && !dLine.startsWith("[")) break;
-
-      if (dLine.match(/^[A-Z][a-z]/) && dLine.length > 55 && parts.length === 0) break;
-      if (dLine.match(/^[A-Z][a-z]/) && parts.length > 0) break;
-
-      const clean = dLine.replace(/\[EMOTION:[^\]]+\]/gi, "").trim();
-      if (clean && !clean.startsWith("(")) parts.push(clean);
-      j++;
-      if (parts.length >= 4) break;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (matchesCue(line.toUpperCase())) {
+        let parenthetical = "";
+        let j = i + 1;
+        if (j < lines.length && lines[j].trim().startsWith("(")) {
+          parenthetical = lines[j].trim().replace(/[()]/g, "").trim();
+          j++;
+        }
+        const parts = [];
+        while (j < lines.length) {
+          const l = lines[j].trim();
+          if (!l || l.match(/^(INT\.|EXT\.|FADE|CUT|SCENE)/i) || (l === l.toUpperCase() && l.length < 30 && !l.includes("."))) {
+            break;
+          }
+          if (!l.startsWith("[EMOTION:")) parts.push(l);
+          j++;
+        }
+        const text = parts.join(" ").trim();
+        if (text.length >= 2) {
+          dialogues.push({ text, original: text, emotion: "neutral", parenthetical });
+        }
+      }
     }
-
-    const text = parts.join(" ").trim();
-    if (text.length < 2) continue;
-
-    const block = lines.slice(i, Math.min(j + 3, lines.length)).join(" ");
-    const emotionMatch = block.match(/\[EMOTION:\s*([^\]]+)\]/i);
-
-    dialogues.push({
-      text,
-      emotion: emotionMatch ? emotionMatch[1].trim() : "neutral",
-      parenthetical
-    });
   }
 
   const seen = new Set();
   return dialogues.filter(d => {
-    const key = d.text.trim().toLowerCase();
-    if (seen.has(key)) return false;
+    const key = (d.text || "").trim().toLowerCase();
+    if (!key || seen.has(key)) return false;
     seen.add(key);
     return true;
   });
@@ -239,89 +333,232 @@ export default function Characters() {
   useEffect(() => {
     const stored = sessionStorage.getItem("scenicaResult");
     if (!stored) { router.push("/"); return; }
-    const parsed = JSON.parse(stored);
-    setResult(parsed);
+    let parsed = JSON.parse(stored);
 
     const storyText = sessionStorage.getItem("scenicaStory") || "";
 
+    // ── UNIVERSAL NON-CHARACTER name guard ─────────────────────────────────
+    // Strip pronouns, articles, conjunctions from whatever /api/generate returned.
+    // This is a safety net against any upstream extraction bugs.
+    // The list is language-level words only — never story-specific names.
+    const NON_CHAR_NAMES = new Set([
+      // Pronouns & articles
+      "SHE", "HE", "THEY", "IT", "WE", "YOU", "I", "ME", "HIM", "HER", "THEM",
+      "THE", "A", "AN", "AND", "OR", "BUT", "SO", "IF", "ON", "AT", "IN",
+      "BECAUSE", "THEN", "WHEN", "THAT", "THIS", "WHAT", "HOW", "WHY", "WHERE",
+      "SUDDENLY", "BEFORE", "AFTER", "THUS", "THOSE", "THESE", "WHICH", "ONCE",
+      // Affirmations / negations
+      "YES", "NO", "OKAY", "OK", "SURE", "INDEED", "PERHAPS", "MAYBE", "NEVER", "ALWAYS",
+      // Screenplay format labels — NEVER character names
+      "DIALOGUE", "ACTION", "SCENE", "SHOT", "CUT", "FADE", "SMASH", "DISSOLVE",
+      "INT", "EXT", "NARRATOR", "NARRATION", "VOICE", "OVER", "CONTINUED",
+      "SCRIPT", "SCREENPLAY", "CHARACTER", "PROTAGONIST", "ANTAGONIST",
+      // Common false-positives from formatting
+      "NOTE", "END", "BEGIN", "START", "TITLE", "HEADER", "SECTION", "PART",
+    ]);
+    // Also reject possessive forms like "NAME'S" regardless of the name
+    const isPossessive = (name) => /^[A-Z]+'S$/.test(name);
+
+    if (Array.isArray(parsed.characters) && parsed.characters.length > 0) {
+      const cleaned = parsed.characters.filter(c => {
+        const nameUp = (c.name || "").trim().toUpperCase();
+        return nameUp.length > 1 && !NON_CHAR_NAMES.has(nameUp) && !isPossessive(nameUp);
+      });
+      if (cleaned.length !== parsed.characters.length) {
+        parsed = { ...parsed, characters: cleaned };
+        sessionStorage.setItem("scenicaResult", JSON.stringify(parsed));
+      }
+    }
+
+    // ── Auto-recover character list if empty after guard above ───────────────
+    if (!parsed.characters || !Array.isArray(parsed.characters) || parsed.characters.length === 0) {
+      // Priority 1: extract from parsed scenes (dialogue attribution already done by Claude)
+      const sceneChars = new Set();
+      (parsed.scenes || []).forEach(sc => {
+        (sc.dialogue || []).forEach(d => {
+          if (d && d.character) {
+            const up = d.character.trim().toUpperCase();
+            if (!NON_CHAR_NAMES.has(up) && up.length > 1) sceneChars.add(up);
+          }
+        });
+      });
+
+      let rebuilt = Array.from(sceneChars).map((name, idx) => {
+        const role = idx === 0 ? "Protagonist" : "Supporting";
+        const { appearance, clothing, personality, gender } = inferCharacterDetails(name, role, storyText);
+        return {
+          name,
+          role,
+          gender,
+          age: "Unspecified",
+          appearance,
+          clothing,
+          personality,
+          emotion: "hopeful"
+        };
+      });
+
+      // Priority 2: extract bold names OR proper noun names from story text
+      if (rebuilt.length === 0 && storyText) {
+        const found = new Set();
+
+        // 2a. Match bold names (e.g. **LARA**, **Guardian**, **Arthur**)
+        const boldMatches = [...storyText.matchAll(/\*\*([A-Za-z][A-Za-z\s]{1,25})\*\*/g)];
+        for (const bm of boldMatches) {
+          const up = bm[1].trim().toUpperCase();
+          if (up.length > 1 && !NON_CHAR_NAMES.has(up) && !isPossessive(up) && !/^\d+$/.test(up)) {
+            found.add(up);
+          }
+        }
+
+        // 2b. Match capitalized proper nouns (e.g. Lara, Guardian, Arthur, Merlin)
+        if (found.size === 0) {
+          const words = storyText.match(/\b[A-Z][a-z]{2,20}\b/g) || [];
+          for (const w of words) {
+            const up = w.toUpperCase();
+            if (!NON_CHAR_NAMES.has(up) && !isPossessive(up)) {
+              found.add(up);
+            }
+          }
+        }
+
+        rebuilt = Array.from(found).slice(0, 6).map((name, idx) => {
+          const role = idx === 0 ? "Protagonist" : "Supporting";
+          const { appearance, clothing, personality, gender } = inferCharacterDetails(name, role, storyText);
+          return { name, role, gender, age: "Unspecified", appearance, clothing, personality, emotion: "hopeful" };
+        });
+      }
+
+      if (rebuilt.length > 0) {
+        parsed = { ...parsed, characters: rebuilt };
+        sessionStorage.setItem("scenicaResult", JSON.stringify(parsed));
+      }
+    }
+
+    setResult(parsed);
+
     const ALIAS_MAP = {};
+    const STOP_WORDS = new Set([
+      "THE", "A", "AN", "AND", "OR", "BUT", "SO", "IF", "ON", "AT", "IN", "TO", "OF", "WITH", "BY",
+      "SHE", "HE", "THEY", "IT", "WE", "YOU", "I", "ME", "HIM", "HER", "THEM",
+      "BECAUSE", "THEN", "WHEN", "THAT", "THIS", "WHAT", "HOW", "WHY", "WHERE"
+    ]);
     if (parsed?.characters) {
       parsed.characters.forEach(c => {
         if (!c || !c.name) return;
         const norm = c.name.trim().toUpperCase();
-        ALIAS_MAP[norm] = norm;
-        if (norm.startsWith("THE ")) {
-          ALIAS_MAP[norm.replace(/^THE\s+/, "")] = norm;
-        } else {
-          ALIAS_MAP["THE " + norm] = norm;
+        if (!STOP_WORDS.has(norm)) {
+          ALIAS_MAP[norm] = norm;
+          const cleanName = norm.replace(/^THE\s+/, "").trim();
+          if (cleanName && !STOP_WORDS.has(cleanName)) {
+            ALIAS_MAP[cleanName] = norm;
+            ALIAS_MAP["THE " + cleanName] = norm;
+          }
+          const words = cleanName.split(/\s+/).filter(w => !STOP_WORDS.has(w) && w.length > 2);
+          words.forEach(w => { ALIAS_MAP[w] = norm; });
         }
-        const firstWord = norm.split(/\s+/)[0];
-        if (firstWord.length > 2) ALIAS_MAP[firstWord] = norm;
       });
     }
+
     const resolveChar = (name) => {
       if (!name) return name;
       const up = name.trim().toUpperCase();
-      return ALIAS_MAP[up] || name.trim().toUpperCase();
+      const withoutThe = up.replace(/^THE\s+/, "").trim();
+      return ALIAS_MAP[up] || ALIAS_MAP[withoutThe] || up;
     };
 
-    const buildRowsFromLLM = async () => {
-      let llmRows = null;
+    // ── Dialogue rows: 4-tier pipeline ──────────────────────────────────────
+    // Tier 0: parsed.claudeDialogue  — saved directly from /api/generate Step 1 (most reliable)
+    // Tier 1: parsed.scenes[].dialogue — from screenplay parser
+    // Tier 2: quote regex over raw storyText
+    // Tier 3: fresh Claude API call  — only if all above return 0
+    const buildRowsFromScenes = async () => {
+      const rows = [];
 
-      if (storyText.trim().length > 10) {
+      // Tier 0 — authoritative Claude extraction stored in result
+      if (Array.isArray(parsed?.claudeDialogue) && parsed.claudeDialogue.length > 0) {
+        parsed.claudeDialogue.forEach(d => {
+          const charName = resolveChar(d.speaker) || (d.speaker || "").trim().toUpperCase();
+          const text = (d.quote || "").trim();
+          if (charName && text) {
+            rows.push({ character: charName, original: text, enhanced: "", emotion: "neutral", parenthetical: "", status: "idle" });
+          }
+        });
+      }
+
+      // Tier 1 — screenplay parser scenes
+      if (rows.length === 0) {
+        (parsed?.scenes || []).forEach(sc => {
+          (sc.dialogue || []).forEach(d => {
+            if (!d || !d.text || !d.character) return;
+            const charName = resolveChar(d.character) || d.character.trim().toUpperCase();
+            rows.push({ character: charName, original: d.text, enhanced: "", emotion: d.emotion || "neutral", parenthetical: d.parenthetical || "", status: "idle" });
+          });
+        });
+      }
+
+      // Tier 2 — quote regex
+      if (rows.length === 0 && storyText) {
+        let charList = (parsed?.characters || []).map(c => c.name.toUpperCase());
+        if (charList.length < 2) {
+          const boldNames = [...storyText.matchAll(/\*\*([A-Za-z][A-Za-z\s]{1,25})\*\*/g)].map(m => m[1].trim().toUpperCase());
+          const extraChars = [...new Set(boldNames)].filter(n => !NON_CHAR_NAMES.has(n) && n.length > 1);
+          charList = [...new Set([...charList, ...extraChars])];
+          if (charList.length < 2) charList.push(storyText.match(/\b(system|voice|hologram|intercom|speaker|guardian|ai|keeper)\b/i)?.[1]?.toUpperCase() || "SYSTEM");
+        }
+        const quoteRegex = /[""]([^""]+)[""]/g;
+        let qm; let idx = 0;
+        while ((qm = quoteRegex.exec(storyText)) !== null) {
+          const txt = qm[1].trim();
+          if (txt.length > 2) { rows.push({ character: charList[idx % charList.length], original: txt, enhanced: "", emotion: "neutral", parenthetical: "", status: "idle" }); idx++; }
+        }
+      }
+
+      // Tier 3 — fresh Claude call (only for narrated stories with zero literal quotes)
+      if (rows.length === 0 && storyText) {
         try {
           const res = await fetch("/api/suggest", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              story: storyText,
-              mode: "extract-dialogue",
-              characters: parsed?.characters || []
-            })
+            body: JSON.stringify({ story: storyText, mode: "extract-dialogue", characters: parsed?.characters || [] })
           });
-          const data = await res.json();
-          if (res.ok && data.success && Array.isArray(data.dialogues)) {
-            llmRows = data.dialogues.map(d => ({
-              character: resolveChar(d.character),
-              original: d.line,
-              enhanced: "",
-              emotion: "neutral",
-              parenthetical: "",
-              status: "idle"
-            }));
-          }
-        } catch (e) {
-          console.warn("LLM dialogue extraction failed, using scene fallback:", e);
-        }
-      }
-
-      if (!llmRows) {
-        llmRows = [];
-        if (parsed?.scenes) {
-          parsed.scenes.forEach(sc => {
-            (sc.dialogue || []).forEach(d => {
-              if (!d || !d.text || !d.character) return;
-              llmRows.push({
-                character: resolveChar(d.character),
-                original: d.text,
-                enhanced: "",
-                emotion: d.emotion || "neutral",
-                parenthetical: d.parenthetical || "",
-                status: "idle"
-              });
+          if (res.ok) {
+            const data = await res.json();
+            (data.dialogues || []).forEach(d => {
+              const charName = resolveChar(d.character) || (d.character || "").trim().toUpperCase();
+              const text = (d.line || d.text || "").trim();
+              if (charName && text) rows.push({ character: charName, original: text, enhanced: "", emotion: "neutral", parenthetical: "", status: "idle" });
             });
-          });
-        }
+          }
+        } catch (e) { console.warn("Claude dialogue fallback failed:", e); }
       }
 
-      setDialogueRows(llmRows);
+      const validRows = rows.filter(r => r.character && !NON_CHAR_NAMES.has(r.character.trim().toUpperCase()));
+      setDialogueRows(validRows);
+      if (validRows.length > 0) autoEnhanceAll(validRows, parsed);
 
-      if (llmRows.length > 0) {
-        autoEnhanceAll(llmRows, parsed);
+      // Sync new speakers into character cards
+      if (rows.length > 0) {
+        const existingNames = new Set((parsed.characters || []).map(c => (c.name || "").trim().toUpperCase()));
+        const newSpeakers = [];
+        [...new Set(rows.map(r => (r.character || "").trim().toUpperCase()))].forEach((spk, spkIdx) => {
+          if (spk && spk.length > 1 && !existingNames.has(spk) && !NON_CHAR_NAMES.has(spk)) {
+            const role = (existingNames.size === 0 && spkIdx === 0) ? "Protagonist" : "Supporting";
+            const { appearance, clothing, personality, gender } = inferCharacterDetails(spk, role, storyText);
+            newSpeakers.push({ name: spk, role, gender, age: "Unspecified", appearance, clothing, personality, emotion: "mysterious" });
+            existingNames.add(spk);
+          }
+        });
+        if (newSpeakers.length > 0) {
+          const mergedChars = [...(parsed.characters || []), ...newSpeakers];
+          parsed = { ...parsed, characters: mergedChars };
+          sessionStorage.setItem("scenicaResult", JSON.stringify(parsed));
+          setResult({ ...parsed });
+        }
       }
     };
 
-    buildRowsFromLLM();
+    buildRowsFromScenes();
   }, []);
 
   const fetchCharacterSuggestions = async () => {
@@ -435,10 +672,15 @@ export default function Characters() {
       setEnhancingRowIdx(idx);
       setDialogueRows(prev => prev.map((r, i) => i === idx ? { ...r, status: "loading" } : r));
 
+      let newLine = "";
       try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8000);
+
         const res = await fetch("/api/suggest", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
           body: JSON.stringify({
             story: storyText,
             mode: "enhance-line",
@@ -447,41 +689,44 @@ export default function Characters() {
             personality: ""
           })
         });
+        clearTimeout(timer);
+
         const data = await res.json();
-
         if (res.ok && data.enhancedLine) {
-          const newLine = data.enhancedLine;
-
-          setDialogueRows(prev => prev.map((r, i) => i === idx ? { ...r, enhanced: newLine, status: "done" } : r));
-
-          if (liveResult) {
-            const updatedScenes = (liveResult.scenes || []).map(sc => ({
-              ...sc,
-              dialogue: (sc.dialogue || []).map(d => {
-                if (
-                  d.character?.trim().toUpperCase() === row.character.trim().toUpperCase() &&
-                  d.text === row.original
-                ) {
-                  return { ...d, text: newLine, isEnhanced: true };
-                }
-                return d;
-              })
-            }));
-
-            let updatedScreenplay = liveResult.screenplay || "";
-            if (row.original && updatedScreenplay.includes(row.original)) {
-              updatedScreenplay = updatedScreenplay.replace(row.original, newLine);
-            }
-
-            liveResult = { ...liveResult, scenes: updatedScenes, screenplay: updatedScreenplay };
-            setResult(liveResult);
-            sessionStorage.setItem("scenicaResult", JSON.stringify(liveResult));
-          }
-        } else {
-          setDialogueRows(prev => prev.map((r, i) => i === idx ? { ...r, status: "idle" } : r));
+          newLine = data.enhancedLine;
         }
-      } catch (_) {
-        setDialogueRows(prev => prev.map((r, i) => i === idx ? { ...r, status: "idle" } : r));
+      } catch (e) {
+        console.warn(`Line enhancement timeout/error for row ${idx}:`, e);
+      }
+
+      if (!newLine) {
+        newLine = row.original;
+      }
+
+      setDialogueRows(prev => prev.map((r, i) => i === idx ? { ...r, enhanced: newLine, status: "done" } : r));
+
+      if (liveResult) {
+        const updatedScenes = (liveResult.scenes || []).map(sc => ({
+          ...sc,
+          dialogue: (sc.dialogue || []).map(d => {
+            if (
+              d.character?.trim().toUpperCase() === row.character.trim().toUpperCase() &&
+              d.text === row.original
+            ) {
+              return { ...d, text: newLine, isEnhanced: true };
+            }
+            return d;
+          })
+        }));
+
+        let updatedScreenplay = liveResult.screenplay || "";
+        if (row.original && updatedScreenplay.includes(row.original)) {
+          updatedScreenplay = updatedScreenplay.replace(row.original, newLine);
+        }
+
+        liveResult = { ...liveResult, scenes: updatedScenes, screenplay: updatedScreenplay };
+        setResult(liveResult);
+        sessionStorage.setItem("scenicaResult", JSON.stringify(liveResult));
       }
     }
 
@@ -496,6 +741,8 @@ export default function Characters() {
   );
 
   const { characters, screenplay, genre, tone } = result;
+
+  const displayCharacters = characters || [];
 
   return (
     <main style={{ minHeight: "100vh", background: "linear-gradient(145deg,#1A3636 0%,#162d2d 25%,#1A3636 50%,#142b2b 75%,#0f2222 100%)", fontFamily: "'Georgia',serif", color: "#D6BD98", position: "relative" }}>
@@ -540,7 +787,7 @@ export default function Characters() {
               Meet your <span style={{ backgroundImage: "linear-gradient(135deg,#D6BD98,#677D6A)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", fontStyle: "italic" }}>characters</span>
             </h1>
             <p style={{ fontSize: "15px", color: "rgba(214,189,152,0.7)", fontFamily: "system-ui" }}>
-              {characters.length} character{characters.length !== 1 ? "s" : ""} extracted · Click any card to explore their full profile and dialogue
+              {displayCharacters.length} character{displayCharacters.length !== 1 ? "s" : ""} extracted · Click any card to explore their full profile and dialogue
             </p>
           </div>
 
@@ -623,8 +870,8 @@ export default function Characters() {
         {/* Cards */}
         <div style={{ flex: selected ? "0 0 420px" : "1", transition: "flex 0.35s ease" }}>
           <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 1fr" : "repeat(auto-fill,minmax(240px,1fr))", gap: "20px" }}>
-            {characters.map((char, i) => {
-              const dialogues = getCharacterDialogue(screenplay, char.name, result.scenes);
+            {displayCharacters.map((char, i) => {
+              const dialogues = getCharacterDialogue(screenplay, char.name, result.scenes, dialogueRows);
               const isSel = selected?.name === char.name;
 
               return (
@@ -643,8 +890,18 @@ export default function Characters() {
                   <div style={{ padding: "12px 18px 18px" }}>
                     <div style={{ fontSize: "18px", fontWeight: "700", color: "#D6BD98", marginBottom: "3px" }}>{char.name}</div>
                     <div style={{ fontSize: "11px", color: "#677D6A", fontFamily: "system-ui", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: "600", marginBottom: "10px" }}>{char.role || "Character"}</div>
-                    <p style={{ fontSize: "12px", color: "rgba(214,189,152,0.7)", fontFamily: "system-ui", lineHeight: "1.6", marginBottom: "12px" }}>
-                      {(char.appearance || char.personality || "No description available.").substring(0, 90)}{((char.appearance || "").length > 90 ? "…" : "")}
+                    <p style={{
+                      fontSize: "12px",
+                      color: "rgba(214,189,152,0.7)",
+                      fontFamily: "system-ui",
+                      lineHeight: "1.6",
+                      marginBottom: "12px",
+                      display: "-webkit-box",
+                      WebkitLineClamp: 3,
+                      WebkitBoxOrient: "vertical",
+                      overflow: "hidden"
+                    }}>
+                      {cleanDescriptionText(char.appearance) || char.personality || "No description available."}
                     </p>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
                       {char.age && <span style={{ padding: "3px 10px", borderRadius: "12px", background: "rgba(64,83,76,0.4)", border: "2.5px solid rgba(103,125,106,0.5)", fontSize: "11px", color: "#D6BD98", fontFamily: "system-ui" }}>{char.age}</span>}
@@ -662,7 +919,7 @@ export default function Characters() {
 
         {/* Detail panel */}
         {selected && (() => {
-          const dialogues = getCharacterDialogue(screenplay, selected.name, result.scenes);
+          const dialogues = getCharacterDialogue(screenplay, selected.name, result.scenes, dialogueRows);
 
           return (
             <div style={{ flex: 1, animation: "slideIn 0.32s ease forwards", position: "sticky", top: "82px", maxHeight: "calc(100vh - 100px)", overflowY: "auto", borderRadius: "22px", background: "rgba(40,65,65,0.5)", border: "2.5px solid rgba(103,125,106,0.5)", backdropFilter: "blur(22px)", overflow: "hidden" }}>
@@ -838,9 +1095,15 @@ export default function Characters() {
                   {/* Enhanced */}
                   <div style={{ paddingLeft: "20px" }}>
                     {isDone ? (
-                      <div style={{ fontSize: "13px", color: "#D6BD98", fontFamily: "'Georgia',serif", fontStyle: "italic", lineHeight: "1.65", animation: "fadeIn 0.5s ease forwards" }}>
-                        &ldquo;{row.enhanced}&rdquo;
-                      </div>
+                      row.enhanced && row.enhanced.trim() !== row.original.trim() ? (
+                        <div style={{ fontSize: "13px", color: "#D6BD98", fontFamily: "'Georgia',serif", fontStyle: "italic", lineHeight: "1.65", animation: "fadeIn 0.5s ease forwards" }}>
+                          &ldquo;{row.enhanced}&rdquo;
+                        </div>
+                      ) : (
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "4px 10px", borderRadius: "8px", background: "rgba(103,125,106,0.2)", border: "1px solid rgba(103,125,106,0.4)", fontSize: "11px", color: "rgba(214,189,152,0.75)", fontFamily: "system-ui", fontStyle: "normal", letterSpacing: "0.04em" }}>
+                          ✦ Already Cinematic
+                        </div>
+                      )
                     ) : isBusy ? (
                       <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "rgba(214,189,152,0.6)", fontSize: "12px", fontFamily: "system-ui", fontStyle: "italic" }}>
                         Rewriting for emotional impact...
