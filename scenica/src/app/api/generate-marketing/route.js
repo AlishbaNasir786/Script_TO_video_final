@@ -39,6 +39,8 @@ export async function POST(request) {
       showCharacter: result.showCharacter,
       characters: result.characters,
       screenplay: result.screenplay,
+      scenes: result.scenes,
+      claudeDialogue: result.claudeDialogue,
       estimatedSeconds: result.estimatedSeconds,
       purposeMode: "marketing"
     });

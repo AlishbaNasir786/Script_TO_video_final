@@ -99,6 +99,9 @@ Generate the complete 45-second ad concept and script now, following every rule 
 
       if (!parsed || typeof parsed.screenplay !== "string" || !parsed.screenplay.trim()) continue;
 
+      const screenplayText = parsed.screenplay.trim();
+      const { scenes, claudeDialogue } = parseMarketingScreenplay(screenplayText, parsed.characters || []);
+
       let characters = showCharacter && Array.isArray(parsed.characters)
         ? parsed.characters.map(c => ({
           name: String(c.name || "").trim().toUpperCase(),
@@ -108,7 +111,8 @@ Generate the complete 45-second ad concept and script now, following every rule 
           appearance: c.appearance || "Professional, camera-ready presence.",
           clothing: c.clothing || "Brand-appropriate attire.",
           personality: c.personality || "Warm, relatable, and confident on camera.",
-          emotion: c.emotion || "confident"
+          emotion: c.emotion || "confident",
+          dialogueCount: claudeDialogue.length > 0 ? claudeDialogue.length : 4
         })).filter(c => c.name.length > 0).slice(0, 1)
         : [];
 
@@ -121,7 +125,8 @@ Generate the complete 45-second ad concept and script now, following every rule 
           appearance: "Warm, relatable, and camera-ready presence.",
           clothing: "Casual modern attire.",
           personality: "Friendly, engaging, and trustworthy.",
-          emotion: "confident"
+          emotion: "confident",
+          dialogueCount: claudeDialogue.length > 0 ? claudeDialogue.length : 4
         }];
       }
 
@@ -129,7 +134,9 @@ Generate the complete 45-second ad concept and script now, following every rule 
         videoDescription: String(parsed.videoDescription || "").trim() || "A punchy, professional 45-second ad built around your product.",
         showCharacter,
         characters,
-        screenplay: parsed.screenplay.trim(),
+        screenplay: screenplayText,
+        scenes,
+        claudeDialogue,
         estimatedSeconds: typeof parsed.estimatedSeconds === "number" ? parsed.estimatedSeconds : 45
       };
     } catch (e) {
@@ -138,4 +145,69 @@ Generate the complete 45-second ad concept and script now, following every rule 
   }
 
   return null;
+}
+
+function parseMarketingScreenplay(screenplay, rawCharacters) {
+  const charName = (rawCharacters[0]?.name || "SPEAKER").trim().toUpperCase();
+  const lines = screenplay.split("\n").map(l => l.trim()).filter(Boolean);
+  const dialogueList = [];
+  const scenes = [];
+  let currentScene = null;
+  let currentSpeaker = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.match(/^(INT\.|EXT\.|INT\/EXT\.)/i)) {
+      if (currentScene) scenes.push(currentScene);
+      currentScene = {
+        id: scenes.length + 1,
+        heading: line,
+        location: line.split(/[-—]/)[0].replace(/^(INT\.|EXT\.|INT\/EXT\.)\s*/i, "").trim(),
+        timeOfDay: "DAY",
+        action: "",
+        dialogue: [],
+        emotion: "confident"
+      };
+      currentSpeaker = null;
+      continue;
+    }
+
+    if (line.match(/^[A-Z0-9\s._'-]{2,30}$/) && !line.includes("FADE") && !line.includes("SCENE") && !line.startsWith("[")) {
+      currentSpeaker = line.replace(/\s*\(V\.O\.\)/i, "").trim();
+      continue;
+    }
+
+    if (currentSpeaker && !line.startsWith("(") && !line.startsWith("[")) {
+      const text = line.replace(/^["'“”]+|["'“”]+$/g, "").trim();
+      if (text.length > 3) {
+        dialogueList.push({ speaker: currentSpeaker, quote: text });
+        if (currentScene) {
+          currentScene.dialogue.push({
+            character: currentSpeaker,
+            text,
+            parenthetical: "",
+            emotion: "confident"
+          });
+        }
+      }
+      currentSpeaker = null;
+      continue;
+    }
+  }
+
+  if (currentScene) scenes.push(currentScene);
+
+  if (scenes.length === 0 && dialogueList.length > 0) {
+    scenes.push({
+      id: 1,
+      heading: "INT. STUDIO - DAY",
+      location: "STUDIO",
+      timeOfDay: "DAY",
+      action: "Product commercial scene",
+      dialogue: dialogueList.map(d => ({ character: d.speaker, text: d.quote, parenthetical: "", emotion: "confident" })),
+      emotion: "confident"
+    });
+  }
+
+  return { scenes, claudeDialogue: dialogueList };
 }
