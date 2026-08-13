@@ -27,7 +27,10 @@ If the user's input is very short or generic (e.g. "A spicy and cheesy crunchy s
 
 MARKETING COMMERCIAL STRUCTURE (45 SECONDS TOTAL):
 Attention-Grabbing Hook (0-10s) → Product Introduction (10-22s) → User-Provided Features & Experience (22-35s) → Strong CTA & Ending (35-45s).
-Word Budget: Spoken dialogue/narration MUST total ~85 to 95 words (~35-38s spoken audio + 7-10s visual product beats and dramatic pauses = EXACTLY 45 SECONDS TOTAL).
+MANDATORY SPOKEN DIALOGUE BUDGET — NON-NEGOTIABLE:
+- You MUST write EXACTLY 85 TO 95 SPOKEN WORDS total across all dialogue/narration lines (~38 to 40 seconds of pure spoken audio + 5 to 7 seconds of visual action beats & pauses = EXACTLY 45 SECONDS TOTAL RUNTIME).
+- Write 5 to 6 complete, rich, meaningful spoken dialogue sentences across 4 scenes.
+- NEVER WRITE SHORT DIALOGUE UNDER 85 SPOKEN WORDS (do NOT produce 40, 50, or 60 word scripts).
 
 CRITICAL ANTI-META RULE:
 The instructions in this prompt are generation rules ONLY. Never turn words such as "user", "AI enhancement", "requirements", "grounding", "instructions", or "generation" into advertisement content, dialogue, or narration. The ad must be ABOUT THE PRODUCT DESCRIBED BY THE USER, NOT ABOUT THE PROCESS OF MAKING AN AD.

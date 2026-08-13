@@ -163,11 +163,11 @@ If the user's story input is short or generic (e.g. "Two friends meet after many
 HARD RUNTIME & NARRATIVE STRUCTURE CONSTRAINT — 45 SECONDS TOTAL:
 1. COMPLETE 3-ACT STORY ARC (Compressed into 45s):
    - Strong Introduction (0-12s) → Development & Build-up (12-25s) → Climax / Reveal (25-36s) → Satisfying Resolution & Ending (36-45s).
-2. SPOKEN DIALOGUE + VISUAL PAUSES BUDGET:
-   - Spoken dialogue word budget: 85 to 95 spoken words total (~35-38 seconds spoken audio).
-   - Visual action beats & dramatic pauses: 7 to 10 seconds total of on-screen visual beats and cinematic pauses.
-   - Combined total video runtime = EXACTLY 45 SECONDS TOTAL.
-3. SCENE BUDGET: 3 to 4 short, punchy scenes max. Do NOT write long multi-page screenplays.
+2. MANDATORY SPOKEN DIALOGUE BUDGET — NON-NEGOTIABLE:
+   - You MUST write EXACTLY 85 TO 95 SPOKEN WORDS total across all character dialogue blocks (~38 to 40 seconds of pure spoken audio + 5 to 7 seconds of visual action beats and pauses = EXACTLY 45 SECONDS TOTAL VIDEO DURATION).
+   - Write 5 to 6 complete, rich, meaningful spoken dialogue lines across 4 scenes.
+   - NEVER WRITE SHORT DIALOGUE UNDER 85 SPOKEN WORDS (do NOT produce 40, 50, or 60 word scripts).
+3. SCENE BUDGET: 3 to 4 scenes max with rich dialogue in each scene. Do NOT write short single-sentence scenes.
 
 MANDATORY NARRATIVE COMPLETION RULE:
 - If the input story or dialogue snippet cuts off abruptly or ends on an unanswered question (e.g. "What about you?"), you MUST naturally resolve it.
