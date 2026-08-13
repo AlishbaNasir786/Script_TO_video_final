@@ -4,13 +4,12 @@ import { extractStoryDataWithClaude, callClaude } from "@/lib/anthropicClient";
 function isMeaningfulInput(text) {
   if (!text || typeof text !== "string") return false;
   const trimmed = text.trim();
-  if (trimmed.length < 12) return false;
 
   const words = trimmed.split(/\s+/).filter(Boolean);
-  if (words.length < 3) return false;
+  if (words.length < 30) return false;
 
   const alphaWords = words.filter(w => w.replace(/[^a-zA-Z0-9]/g, "").length > 1);
-  if (alphaWords.length < 2) return false;
+  if (alphaWords.length < 20) return false;
 
   if (/^(.)\1+$/i.test(trimmed.replace(/\s+/g, ""))) return false;
 
@@ -24,7 +23,7 @@ export async function POST(request) {
 
     if (!story || !isMeaningfulInput(story)) {
       return NextResponse.json(
-        { error: "Please enter a meaningful story or description (at least 3 real words)." },
+        { error: "Please enter a meaningful story description of at least 30 words." },
         { status: 400 }
       );
     }
