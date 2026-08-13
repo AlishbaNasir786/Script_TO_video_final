@@ -86,10 +86,10 @@ ${scriptText}
 Extract the characters and full dialogue attribution now, following every rule above exactly. Return ONLY the JSON object.`;
 
   const models = [
-    "claude-sonnet-4-6",
-    "claude-haiku-4-5-20251001",
-    "claude-sonnet-4-5-20250929",
-    "claude-opus-4-5-20251101"
+    "claude-3-5-sonnet-20241022",
+    "claude-3-5-haiku-20241022",
+    "claude-3-haiku-20240307",
+    "claude-3-opus-20240229"
   ];
 
   for (const model of models) {
@@ -236,10 +236,10 @@ export async function callClaude(userPrompt, systemPrompt = "", maxTokens = 4096
 
   const anthropic = new Anthropic({ apiKey });
   const models = [
-    "claude-sonnet-4-6",
-    "claude-haiku-4-5-20251001",
-    "claude-sonnet-4-5-20250929",
-    "claude-opus-4-5-20251101"
+    "claude-3-5-sonnet-20241022",
+    "claude-3-5-haiku-20241022",
+    "claude-3-haiku-20240307",
+    "claude-3-opus-20240229"
   ];
 
   for (const model of models) {
