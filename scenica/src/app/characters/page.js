@@ -535,12 +535,12 @@ export default function Characters() {
 
       const validRows = rows.filter(r => r.character && !NON_CHAR_NAMES.has(r.character.trim().toUpperCase()));
       
-      // 30-Second Rule Enforcer: Cap dialogue rows to 70 total spoken words max (~28-30s)
+      // 45-Second Rule Enforcer: Cap dialogue rows to 95 total spoken words max (~45s)
       let wordAccumulator = 0;
       const cappedRows = [];
       for (const r of validRows) {
         const lineWords = (r.original || "").trim().split(/\s+/).filter(Boolean).length;
-        if (wordAccumulator + lineWords <= 72 || cappedRows.length === 0) {
+        if (wordAccumulator + lineWords <= 98 || cappedRows.length === 0) {
           cappedRows.push(r);
           wordAccumulator += lineWords;
         } else {

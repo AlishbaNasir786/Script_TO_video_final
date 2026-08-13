@@ -7,22 +7,23 @@ export async function generateMarketingContent(productDescription, showCharacter
   const anthropic = new Anthropic({ apiKey });
 
   const characterModeInstructions = showCharacter
-    ? "MODE: WITH CHARACTER\nCreate 1-2 on-screen human personas (e.g. a customer, a brand ambassador) who appear in the video and speak the dialogue. Give each a short cue name (NARRATOR, ALEX, CUSTOMER, etc.), a believable appearance and personality, and write their spoken lines directly into the script as character cues + dialogue."
+    ? "MODE: WITH CHARACTER — COMPULSORY SINGLE CHARACTER\nCreate EXACTLY 1 primary on-screen human persona (e.g. ALEX, CUSTOMER, or BRAND AMBASSADOR) who appears in the video and speaks ALL dialogue throughout the script. NEVER create multiple characters. Give this single persona a short cue name, a believable camera-ready appearance and personality, and write ALL character dialogue lines under this single character cue."
     : "MODE: NO CHARACTER (Professional / Product-Only)\nDo NOT create any human personas. This is a clean, professional product-focused video: on-screen text, product shots, and ONE neutral off-screen NARRATOR voiceover only — no named human character appears. The \"characters\" array in your JSON output MUST be empty. Every line of the script is either [ON-SCREEN TEXT: ...], [PRODUCT SHOT: ...], or NARRATOR (V.O.) dialogue.";
 
   const systemPrompt = `You are an award-winning commercial director and copywriter. You turn a short product/brand description into a punchy, professional video ad concept and script.
 
 ${characterModeInstructions}
 
-HARD CONSTRAINTS — NON-NEGOTIABLE:
-1. MAXIMUM RUNTIME: 30 seconds total. At natural spoken pace (~2.5 words/second), that's roughly 65-75 words of spoken dialogue/narration MAXIMUM across the entire script. Do not exceed this — a script that runs long is a failed script.
+HARD CONSTRAINTS — NON-NEGOTIABLE & ABSOLUTE:
+1. EXACT DURATION TARGET: EXACTLY 45 SECONDS TOTAL RUNTIME.
+   - Total spoken dialogue / voiceover word budget: EXACTLY 85 to 95 spoken words across all character dialogue/narration lines (~35-38 seconds spoken audio + 7-10 seconds of on-screen visual product beats and dramatic pauses = EXACTLY 45 SECONDS TOTAL VIDEO DURATION).
+   - Keep total spoken word count strictly between 85 and 95 words across the entire script. Do not write short scripts (<80 words) or long scripts (>100 words).
 2. LANGUAGE: Simple, everyday words. No jargon, no corporate buzzwords, no complex sentence structures. A 12-year-old should understand every line instantly.
-3. STRUCTURE (compress all of this into 30 seconds):
-   - Hook (2-4s): grab attention immediately — a question, a bold claim, or a relatable moment
-   - Problem/Desire (5-8s): name what the viewer wants or struggles with
-   - Solution (10-12s): show the product doing its thing
-   - Payoff/Proof (4-6s): quick evidence it works, or an emotional payoff
-   - Call to Action (3-5s): ONE clear, simple instruction of what to do next
+3. 45-SECOND TIMELINE STRUCTURE:
+   - Hook (0-8s): Attention-grabbing opening (15-18 words)
+   - Problem & Desire (8-20s): Establish struggle or need (25-28 words)
+   - Solution & Proof (20-35s): Show product in action with key benefits (30-32 words)
+   - Call to Action & Resolution (35-45s): Clear, memorable closing instruction (15-18 words)
 4. TONE: Confident and warm, never salesy or shouty. Short punchy sentences. Contractions are fine and encouraged (it's, you'll, don't).
 5. The "videoDescription" field is ALWAYS required regardless of character mode — write 1-2 attractive sentences describing the ad concept and vibe, the kind of line you'd pitch to a client to get them excited.
 
@@ -72,7 +73,7 @@ If showCharacter is false, "characters" MUST be an empty array [].`;
 ${productDescription}
 """
 
-Generate the complete 30-second-max ad concept and script now, following every rule above exactly. Return ONLY the JSON object.`;
+Generate the complete 45-second ad concept and script now, following every rule above exactly. Return ONLY the JSON object.`;
 
   const models = [
     "claude-sonnet-4-6",
@@ -98,7 +99,7 @@ Generate the complete 30-second-max ad concept and script now, following every r
 
       if (!parsed || typeof parsed.screenplay !== "string" || !parsed.screenplay.trim()) continue;
 
-      const characters = showCharacter && Array.isArray(parsed.characters)
+      let characters = showCharacter && Array.isArray(parsed.characters)
         ? parsed.characters.map(c => ({
           name: String(c.name || "").trim().toUpperCase(),
           role: c.role || "Brand Ambassador",
@@ -108,15 +109,28 @@ Generate the complete 30-second-max ad concept and script now, following every r
           clothing: c.clothing || "Brand-appropriate attire.",
           personality: c.personality || "Warm, relatable, and confident on camera.",
           emotion: c.emotion || "confident"
-        })).filter(c => c.name.length > 0)
+        })).filter(c => c.name.length > 0).slice(0, 1)
         : [];
 
+      if (showCharacter && characters.length === 0) {
+        characters = [{
+          name: "ALEX",
+          role: "Brand Ambassador",
+          gender: "Unspecified",
+          age: "25-30",
+          appearance: "Warm, relatable, and camera-ready presence.",
+          clothing: "Casual modern attire.",
+          personality: "Friendly, engaging, and trustworthy.",
+          emotion: "confident"
+        }];
+      }
+
       return {
-        videoDescription: String(parsed.videoDescription || "").trim() || "A punchy, professional 30-second ad built around your product.",
+        videoDescription: String(parsed.videoDescription || "").trim() || "A punchy, professional 45-second ad built around your product.",
         showCharacter,
         characters,
         screenplay: parsed.screenplay.trim(),
-        estimatedSeconds: typeof parsed.estimatedSeconds === "number" ? parsed.estimatedSeconds : 30
+        estimatedSeconds: typeof parsed.estimatedSeconds === "number" ? parsed.estimatedSeconds : 45
       };
     } catch (e) {
       console.warn(`[Marketing Content Generation - ${model}]:`, e.message);

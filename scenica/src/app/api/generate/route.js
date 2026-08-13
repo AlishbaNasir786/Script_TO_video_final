@@ -21,10 +21,10 @@ export async function POST(request) {
     }
 
     const scriptStyleInstructions = {
-      hollywood: `FORMAT: Write as a 28 to 30 second cinematic screenplay (2-3 scenes max). High dramatic stakes, written to exactly 62-70 spoken words total.`,
-      shortfilm: `FORMAT: Write as a 28 to 30 second short film screenplay (2-3 scenes max). One clear emotional arc, written to exactly 62-70 spoken words total.`,
-      tvepisode: `FORMAT: Write as a 28 to 30 second teaser scene (2-3 scenes max). Dramatic hook ending, written to exactly 62-70 spoken words total.`,
-      stageplay: `FORMAT: Write as a 28 to 30 second intimate stage scene. Pure dialogue focus, written to exactly 62-70 spoken words total.`
+      hollywood: `FORMAT: Write as a 45-second cinematic screenplay (3-4 scenes max). High dramatic stakes, written to exactly 85-95 spoken words total.`,
+      shortfilm: `FORMAT: Write as a 45-second short film screenplay (3 scenes max). One clear emotional arc, written to exactly 85-95 spoken words total.`,
+      tvepisode: `FORMAT: Write as a 45-second teaser scene (3 scenes max). Dramatic hook ending, written to exactly 85-95 spoken words total.`,
+      stageplay: `FORMAT: Write as a 45-second intimate stage scene. Pure dialogue focus, written to exactly 85-95 spoken words total.`
     };
 
     const toneStyleInstructions = {
@@ -34,7 +34,7 @@ export async function POST(request) {
       poetic: `TONE: Literary and metaphorical language. Lyrical action lines.`
     };
 
-    const scriptInstruction = scriptStyleInstructions[scriptStyle] || `FORMAT: Write as a 28 to 30 second Hollywood screenplay with 2-3 tight scenes (62 to 70 spoken words total).`;
+    const scriptInstruction = scriptStyleInstructions[scriptStyle] || `FORMAT: Write as a 45-second Hollywood screenplay with 3 tight scenes (85 to 95 spoken words total).`;
     const toneInstruction = toneStyleInstructions[toneStyle] || `TONE: Authentic emotional depth and human warmth.`;
 
     // ── MARKETING MODE: different character and script prompts ──────────────────
@@ -136,24 +136,23 @@ CHARACTERS: PLACEHOLDER
 ${scriptInstruction}
 ${toneInstruction}
 
-HARD RUNTIME & NARRATIVE STRUCTURE CONSTRAINT — 30 SECONDS TOTAL (WITH VISUAL PAUSES & COMPLETE 3-ACT ARC):
-1. COMPLETE 3-ACT STORY ARC (Compressed into 30s):
-   - ACT 1: STARTING HOOK (0–8s) — Establish the premise, setting, and initial tension or question immediately.
-   - ACT 2: CLIMAX / TURNING POINT (8–20s) — The confrontation, key decision, or emotional peak of the story.
-   - ACT 3: COMPLETE FINAL ENDING (20–30s) — A decisive, satisfying resolution and final payoff. Do NOT leave the story unresolved or cut off mid-thought.
+HARD RUNTIME & NARRATIVE STRUCTURE CONSTRAINT — 45 SECONDS TOTAL (WITH VISUAL PAUSES & COMPLETE 3-ACT ARC):
+1. COMPLETE 3-ACT STORY ARC (Compressed into 45s):
+   - ACT 1: STARTING HOOK (0–12s) — Establish the premise, setting, and initial tension or question immediately.
+   - ACT 2: CLIMAX / TURNING POINT (12–32s) — The confrontation, key decision, or emotional peak of the story.
+   - ACT 3: COMPLETE FINAL ENDING (32–45s) — A decisive, satisfying resolution and final payoff. Do NOT leave the story unresolved or cut off mid-thought.
 2. SPOKEN DIALOGUE + VISUAL PAUSES BUDGET:
-   - Spoken dialogue word budget: 50 to 58 spoken words total (~20-22 seconds spoken audio).
-   - Visual action beats & dramatic pauses: 8 to 10 seconds total of on-screen visual beats and cinematic pauses between lines.
-   - Combined total video runtime = EXACTLY 28 TO 30 SECONDS.
-3. SCENE BUDGET: 2 to 3 short, punchy scenes max. Do NOT write long multi-page screenplays.
+   - Spoken dialogue word budget: 85 to 95 spoken words total (~35-38 seconds spoken audio).
+   - Visual action beats & dramatic pauses: 7 to 10 seconds total of on-screen visual beats and cinematic pauses between lines.
+   - Combined total video runtime = EXACTLY 45 SECONDS TOTAL.
+3. SCENE BUDGET: 3 to 4 short, punchy scenes max. Do NOT write long multi-page screenplays.
 4. MANDATORY NARRATIVE COMPLETION RULE:
    - If the input story or dialogue snippet cuts off abruptly or ends on an unanswered question (e.g. "What about you?"), you MUST naturally resolve it.
-   - Write 1 to 2 closing lines to complete the 3-act arc: answer the question (Climax) and deliver a warm, decisive closing line (Final Resolution).
+   - Write closing lines to complete the 3-act arc: answer the question (Climax) and deliver a warm, decisive closing line (Final Resolution).
    - NEVER end a screenplay on an unanswered question or mid-thought!
-5. DIALOGUE SIMPLICITY & SINGLE-SENTENCE RULE:
-   - Each spoken dialogue line MUST be ONE clear, well-formed single sentence (approx 12-15 words).
-   - Use simple, natural everyday words that feel easy and fluid to speak out loud.
-   - 4 to 5 single-sentence dialogue lines total (~55 words spoken) + natural dramatic action pauses between lines = EXACTLY 30 SECONDS TOTAL VIDEO DURATION.
+5. DIALOGUE SIMPLICITY & NATURAL PACING RULE:
+   - Each spoken dialogue line should be clear, natural, and fluid to speak out loud.
+   - Spoken dialogue lines total ~85 to 95 words + natural dramatic action pauses between lines = EXACTLY 45 SECONDS TOTAL VIDEO DURATION.
 
 CRITICAL DIALOGUE ATTRIBUTION & ACCURACY RULE — THIS IS MANDATORY:
 1. For every line of dialogue in quotes or after colons (e.g. "Speaker: 'Quote...'"), identify the EXACT character who speaks it.
@@ -409,18 +408,18 @@ Write the complete screenplay now. Start with FADE IN: and end with FADE OUT.`;
       ? applyDialogueMap(rawScenes, claudeDialogueMap)
       : reattributeDialogueFromStoryLegacy(rawScenes, story, characters);
 
-    // Strict 30-Second Runtime Cap (Max 3 scenes)
-    if (Array.isArray(scenes) && scenes.length > 3) {
-      scenes = scenes.slice(0, 3);
+    // Strict 45-Second Runtime Cap (Max 4 scenes)
+    if (Array.isArray(scenes) && scenes.length > 4) {
+      scenes = scenes.slice(0, 4);
     }
 
-    // Word Budget Trimmer: Cap total spoken dialogue to 70 words max (~28-30s max)
+    // Word Budget Trimmer: Cap total spoken dialogue to 95 words max (~45s max)
     let totalWordCount = 0;
     if (Array.isArray(claudeDialogueList) && claudeDialogueList.length > 0) {
       const trimmedList = [];
       for (const item of claudeDialogueList) {
         const wCount = (item.quote || "").trim().split(/\s+/).filter(Boolean).length;
-        if (totalWordCount + wCount <= 72 || trimmedList.length === 0) {
+        if (totalWordCount + wCount <= 98 || trimmedList.length === 0) {
           trimmedList.push(item);
           totalWordCount += wCount;
         } else {
@@ -435,7 +434,7 @@ Write the complete screenplay now. Start with FADE IN: and end with FADE OUT.`;
       const trimmedDialogue = [];
       for (const d of (sc.dialogue || [])) {
         const wCount = (d.text || "").trim().split(/\s+/).filter(Boolean).length;
-        if (sceneWordAcc + wCount <= 72 || trimmedDialogue.length === 0) {
+        if (sceneWordAcc + wCount <= 98 || trimmedDialogue.length === 0) {
           trimmedDialogue.push(d);
           sceneWordAcc += wCount;
         } else {
@@ -454,7 +453,7 @@ Write the complete screenplay now. Start with FADE IN: and end with FADE OUT.`;
       genre: isMarketing ? "marketing" : (scriptStyle || "hollywood"),
       tone: isMarketing ? "professional" : (toneStyle || "warm"),
       purposeMode: purposeMode || "story",
-      estimatedSeconds: 30
+      estimatedSeconds: 45
     });
 
   } catch (error) {

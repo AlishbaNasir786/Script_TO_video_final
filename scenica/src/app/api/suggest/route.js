@@ -225,7 +225,7 @@ CRITICAL DIALOGUE ENHANCEMENT RULES:
 1. EASY & CONVERSATIONAL: Use simple, natural everyday words. The dialogue MUST be easy and fluid to speak out loud — no artificial jargon or overly complex academic phrasing.
 2. SINGLE COMPLETE SENTENCE: Rewrite as ONE clear, well-formed sentence (approx 12 to 15 words). Do NOT break into multiple choppy sentences or tiny fragments.
 3. PRESERVE EXACT MEANING: Keep the exact same core message, facts, and emotional intent of the original sentence.
-4. 30-SECOND PACING: Write with natural rhythm and breath pauses suitable for a 30-second total video duration.
+4. 45-SECOND PACING: Write with natural rhythm and breath pauses suitable for a 45-second total video duration.
 
 Return ONLY the rewritten single sentence of dialogue. No quotation marks, no preamble, no explanations.`;
 
