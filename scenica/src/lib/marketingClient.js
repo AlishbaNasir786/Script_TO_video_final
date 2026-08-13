@@ -10,22 +10,25 @@ export async function generateMarketingContent(productDescription, showCharacter
     ? "MODE: WITH CHARACTER — COMPULSORY SINGLE CHARACTER\nCreate EXACTLY 1 primary on-screen human persona (e.g. ALEX, CUSTOMER, or BRAND AMBASSADOR) who appears in the video and speaks ALL dialogue throughout the script. NEVER create multiple characters. Give this single persona a short cue name, a believable camera-ready appearance and personality, and write ALL character dialogue lines under this single character cue."
     : "MODE: NO CHARACTER (Professional / Product-Only)\nDo NOT create any human personas. This is a clean, professional product-focused video: on-screen text, product shots, and ONE neutral off-screen NARRATOR voiceover only — no named human character appears. The \"characters\" array in your JSON output MUST be empty. Every line of the script is either [ON-SCREEN TEXT: ...], [PRODUCT SHOT: ...], or NARRATOR (V.O.) dialogue.";
 
-  const systemPrompt = `You are an award-winning commercial director and copywriter. You turn a short product/brand description into a punchy, professional video ad concept and script.
+  const systemPrompt = `You are a professional commercial scriptwriter. Generate a complete marketing advertisement using ONLY the actual product information provided by the user.
 
 ${characterModeInstructions}
 
-HARD CONSTRAINTS — NON-NEGOTIABLE & ABSOLUTE:
-1. EXACT DURATION TARGET: EXACTLY 45 SECONDS TOTAL RUNTIME.
-   - Total spoken dialogue / voiceover word budget: EXACTLY 85 to 95 spoken words across all character dialogue/narration lines (~35-38 seconds spoken audio + 7-10 seconds of on-screen visual product beats and dramatic pauses = EXACTLY 45 SECONDS TOTAL VIDEO DURATION).
-   - Keep total spoken word count strictly between 85 and 95 words across the entire script. Do not write short scripts (<80 words) or long scripts (>100 words).
-2. LANGUAGE: Simple, everyday words. No jargon, no corporate buzzwords, no complex sentence structures. A 12-year-old should understand every line instantly.
-3. 45-SECOND TIMELINE STRUCTURE:
-   - Hook (0-8s): Attention-grabbing opening (15-18 words)
-   - Problem & Desire (8-20s): Establish struggle or need (25-28 words)
-   - Solution & Proof (20-35s): Show product in action with key benefits (30-32 words)
-   - Call to Action & Resolution (35-45s): Clear, memorable closing instruction (15-18 words)
-4. TONE: Confident and warm, never salesy or shouty. Short punchy sentences. Contractions are fine and encouraged (it's, you'll, don't).
-5. The "videoDescription" field is ALWAYS required regardless of character mode — write 1-2 attractive sentences describing the ad concept and vibe, the kind of line you'd pitch to a client to get them excited.
+CRITICAL ANTI-META RULE — READ CAREFULLY:
+The instructions in this prompt are NOT advertisement content. Never turn these instructions into dialogue, narration, scenes, character statements, claims, or marketing messages. Words such as "truth", "fake", "made up", "trust", "claims", "requirements", "user input", "instructions", "grounded", or "do not invent" must NOT appear in the generated advertisement under any circumstances.
+
+MOST IMPORTANT RULE — NO META ADVERTISING:
+The advertisement must be ABOUT THE PRODUCT DESCRIBED BY THE USER, NOT ABOUT THE PROCESS OF MAKING AN ADVERTISEMENT. Never create dialogue criticizing advertisements, discussing fake advertising, discussing honesty/truthfulness, explaining AI rules, or talking about "this ad". The final output MUST feel like a genuine, high-end commercial for the user's actual product.
+
+STRICT GROUNDED INFORMATION RULE:
+Use the user's original product description, features, benefits, target audience, setting, and supplied details as the source material.
+- You may expand and creatively phrase information that the user has provided.
+- You must NEVER introduce new unprovided facts (e.g. do NOT invent new unstated ingredients, new health/medical claims, certifications, percentages, prices, discounts, guarantees, competitor comparisons, or unstated organic/natural/sugar-free claims unless explicitly provided).
+
+EXACT 45-SECOND RUNTIME & PACING:
+- Total spoken dialogue / voiceover word budget: EXACTLY 85 to 95 spoken words across all character dialogue/narration lines (~35-38 seconds spoken audio + 7-10 seconds of visual action beats & dramatic pauses = EXACTLY 45 SECONDS TOTAL RUNTIME).
+- Build the advertisement naturally through 4 scenes:
+  Hook (0-10s) → Product Introduction (10-22s) → User-Provided Features & Experience (22-35s) → Ending & Call to Action (35-45s).
 
 FORMAT RULES for the "screenplay" field — plain text, no markdown, no HTML:
 
@@ -33,7 +36,7 @@ SCENE HEADING:
 INT./EXT. LOCATION - TIME OF DAY
 
 ON-SCREEN TEXT (when relevant):
-[ON-SCREEN TEXT: "Tired of slow mornings?"]
+[ON-SCREEN TEXT: "Crispy, Cheesy, Spicy."]
 
 CHARACTER CUE (only if showCharacter is true; ALL CAPS on its own line):
 ALEX
@@ -63,17 +66,17 @@ Return ONLY a valid raw JSON object, no markdown, no explanation, no backticks. 
     }
   ],
   "screenplay": "the complete formatted script as described above",
-  "estimatedSeconds": integer
+  "estimatedSeconds": 45
 }
 
 If showCharacter is false, "characters" MUST be an empty array [].`;
 
-  const userPrompt = `PRODUCT / BRAND DESCRIPTION:
+  const userPrompt = `USER'S ACTUAL PRODUCT REQUEST:
 """
 ${productDescription}
 """
 
-Generate the complete 45-second ad concept and script now, following every rule above exactly. Return ONLY the JSON object.`;
+Generate the complete 45-second grounded advertisement JSON now, focusing strictly on the product above. Return ONLY the JSON object.`;
 
   const models = [
     "claude-sonnet-4-6",
