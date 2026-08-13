@@ -1,14 +1,30 @@
 import { NextResponse } from "next/server";
 import { extractStoryDataWithClaude, callClaude } from "@/lib/anthropicClient";
 
+function isMeaningfulInput(text) {
+  if (!text || typeof text !== "string") return false;
+  const trimmed = text.trim();
+  if (trimmed.length < 12) return false;
+
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  if (words.length < 3) return false;
+
+  const alphaWords = words.filter(w => w.replace(/[^a-zA-Z0-9]/g, "").length > 1);
+  if (alphaWords.length < 2) return false;
+
+  if (/^(.)\1+$/i.test(trimmed.replace(/\s+/g, ""))) return false;
+
+  return true;
+}
+
 export async function POST(request) {
   try {
     const { story, scriptStyle, toneStyle, purposeMode } = await request.json();
     const isMarketing = purposeMode === "marketing";
 
-    if (!story || story.trim().length < 10) {
+    if (!story || !isMeaningfulInput(story)) {
       return NextResponse.json(
-        { error: "Please provide a more detailed story description." },
+        { error: "Please enter a meaningful story or description (at least 3 real words)." },
         { status: 400 }
       );
     }
@@ -269,7 +285,9 @@ Write the complete screenplay now. Start with FADE IN: and end with FADE OUT.`;
       ]);
 
       const invalidNames = new Set([
-        "AND", "OR", "BUT", "SO", "THEIR", "THEIRS", "ITS", "THEY", "THE", "A", "AN", "THIS", "THAT", "SHE", "HE", "IT", "WE", "YOU", "I",
+        "AND", "OR", "BUT", "SO", "THEIR", "THEIRS", "ITS", "THEY", "THE", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+        "AN", "THIS", "THAT", "SHE", "HE", "IT", "WE", "YOU",
+        "SCENE", "FADE IN", "FADE OUT", "INT", "EXT", "ON-SCREEN TEXT", "NARRATOR", "SYSTEM", "USER",
         "AND THE FARMERS", "THEIR BOOMING", "BOOMING", "FARMERS", "FARMER", "VILLAGERS", "VILLAGER",
       ]);
 

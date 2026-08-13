@@ -1,15 +1,31 @@
 import { NextResponse } from "next/server";
 import { generateMarketingContent } from "@/lib/marketingClient";
 
+function isMeaningfulInput(text) {
+  if (!text || typeof text !== "string") return false;
+  const trimmed = text.trim();
+  if (trimmed.length < 12) return false;
+
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  if (words.length < 3) return false;
+
+  const alphaWords = words.filter(w => w.replace(/[^a-zA-Z0-9]/g, "").length > 1);
+  if (alphaWords.length < 2) return false;
+
+  if (/^(.)\1+$/i.test(trimmed.replace(/\s+/g, ""))) return false;
+
+  return true;
+}
+
 // POST /api/generate-marketing
 // Body: { productDescription: string, showCharacter: boolean }
 export async function POST(request) {
   try {
     const { productDescription, showCharacter } = await request.json();
 
-    if (!productDescription || productDescription.trim().length < 5) {
+    if (!productDescription || !isMeaningfulInput(productDescription)) {
       return NextResponse.json(
-        { error: "Please describe your product or brand in a bit more detail." },
+        { error: "Please enter a meaningful product or brand description (at least 3 real words)." },
         { status: 400 }
       );
     }
