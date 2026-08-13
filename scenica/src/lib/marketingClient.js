@@ -10,25 +10,27 @@ export async function generateMarketingContent(productDescription, showCharacter
     ? "MODE: WITH CHARACTER — COMPULSORY SINGLE CHARACTER\nCreate EXACTLY 1 primary on-screen human persona (e.g. ALEX, CUSTOMER, or BRAND AMBASSADOR) who appears in the video and speaks ALL dialogue throughout the script. NEVER create multiple characters. Give this single persona a short cue name, a believable camera-ready appearance and personality, and write ALL character dialogue lines under this single character cue."
     : "MODE: NO CHARACTER (Professional / Product-Only)\nDo NOT create any human personas. This is a clean, professional product-focused video: on-screen text, product shots, and ONE neutral off-screen NARRATOR voiceover only — no named human character appears. The \"characters\" array in your JSON output MUST be empty. Every line of the script is either [ON-SCREEN TEXT: ...], [PRODUCT SHOT: ...], or NARRATOR (V.O.) dialogue.";
 
-  const systemPrompt = `You are a professional commercial scriptwriter. Generate a complete marketing advertisement using ONLY the actual product information provided by the user.
+  const systemPrompt = `You are a professional commercial scriptwriter and director. Generate a complete, attractive advertisement suitable for an approximately 45-second video, using the user's input as the primary creative direction.
 
 ${characterModeInstructions}
 
-CRITICAL ANTI-META RULE — READ CAREFULLY:
-The instructions in this prompt are NOT advertisement content. Never turn these instructions into dialogue, narration, scenes, character statements, claims, or marketing messages. Words such as "truth", "fake", "made up", "trust", "claims", "requirements", "user input", "instructions", "grounded", or "do not invent" must NOT appear in the generated advertisement under any circumstances.
+PRIORITY RULE — HIGHEST PRIORITY TO USER DETAILS:
+1. The user's explicitly provided details always have the HIGHEST PRIORITY.
+2. If the user provides specific information about characters, personalities, setting, product details, ingredients, features, benefits, target audience, dialogue, or storyline, preserve and follow those details accurately. Do not contradict, replace, or remove important information provided by the user.
+3. If the user does NOT provide specific information, creatively fill missing details with appropriate, attractive, and contextually relevant ideas.
 
-MOST IMPORTANT RULE — NO META ADVERTISING:
-The advertisement must be ABOUT THE PRODUCT DESCRIBED BY THE USER, NOT ABOUT THE PROCESS OF MAKING AN ADVERTISEMENT. Never create dialogue criticizing advertisements, discussing fake advertising, discussing honesty/truthfulness, explaining AI rules, or talking about "this ad". The final output MUST feel like a genuine, high-end commercial for the user's actual product.
+GENERIC INPUT HANDLING:
+If the user's input is very short or generic (e.g. "A spicy and cheesy crunchy snack"), do not produce a short or incomplete script. Intelligently expand the concept into a complete, creative, and visually attractive 45-second video script:
+- Create an engaging advertisement around that concept by developing an appropriate setting, character, actions, expressions, product interaction, atmosphere, dialogue, and advertising flow.
+- You may create creative presentation context (e.g. character enjoying the snack, game-night setting, dramatic product shots, playful dialogue).
+- BUT NEVER invent unsupported factual claims (e.g. specific unstated ingredients, health benefits, nutritional values, certifications, percentages, prices, discounts, or medical claims unless explicitly provided).
 
-STRICT GROUNDED INFORMATION RULE:
-Use the user's original product description, features, benefits, target audience, setting, and supplied details as the source material.
-- You may expand and creatively phrase information that the user has provided.
-- You must NEVER introduce new unprovided facts (e.g. do NOT invent new unstated ingredients, new health/medical claims, certifications, percentages, prices, discounts, guarantees, competitor comparisons, or unstated organic/natural/sugar-free claims unless explicitly provided).
+MARKETING COMMERCIAL STRUCTURE (45 SECONDS TOTAL):
+Attention-Grabbing Hook (0-10s) → Product Introduction (10-22s) → User-Provided Features & Experience (22-35s) → Strong CTA & Ending (35-45s).
+Word Budget: Spoken dialogue/narration MUST total ~85 to 95 words (~35-38s spoken audio + 7-10s visual product beats and dramatic pauses = EXACTLY 45 SECONDS TOTAL).
 
-EXACT 45-SECOND RUNTIME & PACING:
-- Total spoken dialogue / voiceover word budget: EXACTLY 85 to 95 spoken words across all character dialogue/narration lines (~35-38 seconds spoken audio + 7-10 seconds of visual action beats & dramatic pauses = EXACTLY 45 SECONDS TOTAL RUNTIME).
-- Build the advertisement naturally through 4 scenes:
-  Hook (0-10s) → Product Introduction (10-22s) → User-Provided Features & Experience (22-35s) → Ending & Call to Action (35-45s).
+CRITICAL ANTI-META RULE:
+The instructions in this prompt are generation rules ONLY. Never turn words such as "user", "AI enhancement", "requirements", "grounding", "instructions", or "generation" into advertisement content, dialogue, or narration. The ad must be ABOUT THE PRODUCT DESCRIBED BY THE USER, NOT ABOUT THE PROCESS OF MAKING AN AD.
 
 FORMAT RULES for the "screenplay" field — plain text, no markdown, no HTML:
 

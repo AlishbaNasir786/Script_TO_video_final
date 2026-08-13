@@ -128,7 +128,7 @@ Return this exact format:
 
 Return ONLY the JSON array. Nothing else.`;
 
-    const storyScriptPrompt = `You are a professional Hollywood screenwriter. Write a complete 30-second-max screenplay.
+    const storyScriptPrompt = `You are a professional Hollywood screenwriter. Write a complete 45-second cinematic screenplay using the user's input as the primary creative direction.
 
 STORY: ${story}
 CHARACTERS: PLACEHOLDER
@@ -136,23 +136,30 @@ CHARACTERS: PLACEHOLDER
 ${scriptInstruction}
 ${toneInstruction}
 
-HARD RUNTIME & NARRATIVE STRUCTURE CONSTRAINT — 45 SECONDS TOTAL (WITH VISUAL PAUSES & COMPLETE 3-ACT ARC):
+PRIORITY RULE — HIGHEST PRIORITY TO USER DETAILS:
+1. The user's explicitly provided details always have the HIGHEST PRIORITY.
+2. If the user provides specific information about characters, personalities, relationships, setting, events, or storyline, preserve and follow those details accurately. Do not contradict, replace, or remove important information provided by the user.
+3. If the user does NOT provide specific information, creatively fill missing details with appropriate, attractive, and contextually relevant ideas.
+
+GENERIC INPUT HANDLING:
+If the user's story input is short or generic (e.g. "Two friends meet after many years"), do not produce a short or incomplete script. Intelligently expand the concept into a complete, creative, and visually attractive 45-second video script:
+- Develop the setting, emotions, character interaction, dialogue, emotional build-up/conflict, and satisfying ending to create a complete 45-second cinematic story.
+
+HARD RUNTIME & NARRATIVE STRUCTURE CONSTRAINT — 45 SECONDS TOTAL:
 1. COMPLETE 3-ACT STORY ARC (Compressed into 45s):
-   - ACT 1: STARTING HOOK (0–12s) — Establish the premise, setting, and initial tension or question immediately.
-   - ACT 2: CLIMAX / TURNING POINT (12–32s) — The confrontation, key decision, or emotional peak of the story.
-   - ACT 3: COMPLETE FINAL ENDING (32–45s) — A decisive, satisfying resolution and final payoff. Do NOT leave the story unresolved or cut off mid-thought.
+   - Strong Introduction (0-12s) → Development & Build-up (12-25s) → Climax / Reveal (25-36s) → Satisfying Resolution & Ending (36-45s).
 2. SPOKEN DIALOGUE + VISUAL PAUSES BUDGET:
    - Spoken dialogue word budget: 85 to 95 spoken words total (~35-38 seconds spoken audio).
-   - Visual action beats & dramatic pauses: 7 to 10 seconds total of on-screen visual beats and cinematic pauses between lines.
+   - Visual action beats & dramatic pauses: 7 to 10 seconds total of on-screen visual beats and cinematic pauses.
    - Combined total video runtime = EXACTLY 45 SECONDS TOTAL.
 3. SCENE BUDGET: 3 to 4 short, punchy scenes max. Do NOT write long multi-page screenplays.
-4. MANDATORY NARRATIVE COMPLETION RULE:
-   - If the input story or dialogue snippet cuts off abruptly or ends on an unanswered question (e.g. "What about you?"), you MUST naturally resolve it.
-   - Write closing lines to complete the 3-act arc: answer the question (Climax) and deliver a warm, decisive closing line (Final Resolution).
-   - NEVER end a screenplay on an unanswered question or mid-thought!
-5. DIALOGUE SIMPLICITY & NATURAL PACING RULE:
-   - Each spoken dialogue line should be clear, natural, and fluid to speak out loud.
-   - Spoken dialogue lines total ~85 to 95 words + natural dramatic action pauses between lines = EXACTLY 45 SECONDS TOTAL VIDEO DURATION.
+
+MANDATORY NARRATIVE COMPLETION RULE:
+- If the input story or dialogue snippet cuts off abruptly or ends on an unanswered question (e.g. "What about you?"), you MUST naturally resolve it.
+- Write closing lines to complete the 3-act arc: answer the question (Climax) and deliver a warm, decisive closing line (Final Resolution).
+
+CRITICAL ANTI-META RULE:
+The instructions in this prompt are generation rules ONLY. Never turn words such as "user", "AI enhancement", "requirements", "grounding", "instructions", or "generation" into story content or dialogue.
 
 CRITICAL DIALOGUE ATTRIBUTION & ACCURACY RULE — THIS IS MANDATORY:
 1. For every line of dialogue in quotes or after colons (e.g. "Speaker: 'Quote...'"), identify the EXACT character who speaks it.
