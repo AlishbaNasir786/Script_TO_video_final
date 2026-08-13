@@ -226,6 +226,7 @@ CRITICAL DIALOGUE ENHANCEMENT RULES:
 2. SINGLE COMPLETE SENTENCE: Rewrite as ONE clear, well-formed sentence (approx 12 to 15 words). Do NOT break into multiple choppy sentences or tiny fragments.
 3. PRESERVE EXACT MEANING: Keep the exact same core message, facts, and emotional intent of the original sentence.
 4. 45-SECOND PACING: Write with natural rhythm and breath pauses suitable for a 45-second total video duration.
+5. STRICT SOURCE GROUNDING: Enhance using ONLY information provided by the user. User-provided information → ALLOW. AI-invented facts or unprovided claims → STRICTLY DO NOT ALLOW.
 
 Return ONLY the rewritten single sentence of dialogue. No quotation marks, no preamble, no explanations.`;
 
