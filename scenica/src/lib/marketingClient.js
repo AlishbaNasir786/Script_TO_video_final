@@ -19,6 +19,12 @@ PRIORITY RULE — HIGHEST PRIORITY TO USER DETAILS:
 2. If the user provides specific information about characters, personalities, setting, product details, ingredients, features, benefits, target audience, dialogue, or storyline, preserve and follow those details accurately. Do not contradict, replace, or remove important information provided by the user.
 3. If the user does NOT provide specific information, creatively fill missing details with appropriate, attractive, and contextually relevant ideas.
 
+USER DIALOGUE VERBATIM RULE — NON-NEGOTIABLE:
+- If the user's brief contains exact quoted lines or specific scripts for the character, those lines are FINAL.
+- Use them VERBATIM in the screenplay — do NOT paraphrase, reword, reorder, or improve them.
+- Only write NEW creative dialogue for scenes or moments the user did NOT explicitly specify.
+- Never replace or rewrite a user-provided quote, even if you think it could be improved.
+
 GENERIC INPUT HANDLING:
 If the user's input is very short or generic (e.g. "A spicy and cheesy crunchy snack"), do not produce a short or incomplete script. Intelligently expand the concept into a complete, creative, and visually attractive 45-second video script:
 - Create an engaging advertisement around that concept by developing an appropriate setting, character, actions, expressions, product interaction, atmosphere, dialogue, and advertising flow.
@@ -84,10 +90,10 @@ ${productDescription}
 Generate the complete 45-second grounded advertisement JSON now, focusing strictly on the product above. Return ONLY the JSON object.`;
 
   const models = [
-    "claude-3-5-sonnet-20241022",
-    "claude-3-5-haiku-20241022",
-    "claude-3-haiku-20240307",
-    "claude-3-opus-20240229"
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5-20251001",
+    "claude-sonnet-4-5-20250929",
+    "claude-opus-4-6"
   ];
 
   for (const model of models) {

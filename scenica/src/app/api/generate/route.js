@@ -53,18 +53,22 @@ export async function POST(request) {
     const toneInstruction = toneStyleInstructions[toneStyle] || `TONE: Authentic emotional depth and human warmth.`;
 
     // ── MARKETING MODE: different character and script prompts ──────────────────
-    const marketingCharacterPrompt = `You are a professional marketing strategist and scriptwriter. Extract all speakers/personas from this marketing script and return ONLY a valid JSON array. No explanation, no markdown, no backticks — just raw JSON.
+    const marketingCharacterPrompt = `You are a professional marketing strategist and scriptwriter. Extract the single primary speaker/persona from this marketing brief and return ONLY a valid JSON array with EXACTLY ONE element. No explanation, no markdown, no backticks — just raw JSON.
 
-Marketing Script: ${story}
+Marketing Brief: ${story}
 
-CRITICAL: The "name" must be the SHORT CUE NAME (e.g. "NARRATOR", "CUSTOMER", "CEO", "ALEX").
-Create logical speaker personas if not explicitly named.
+CRITICAL — SINGLE CHARACTER RULE (NON-NEGOTIABLE):
+Return EXACTLY ONE character in the JSON array. Only one persona speaks in this ad.
+Never return 2 or more characters. If the user's brief mentions multiple people,
+pick the single most relevant brand ambassador or narrator as the only speaker.
+The "name" must be the SHORT CUE NAME (e.g. "NARRATOR", "ALEX", "CUSTOMER").
+If no character is explicitly named, create one appropriate brand ambassador persona.
 
-Return this exact format:
+Return this exact format (ARRAY WITH EXACTLY 1 ELEMENT):
 [
   {
     "name": "SHORT CUE NAME IN CAPS (e.g. NARRATOR, ALEX, CUSTOMER)",
-    "role": "Narrator/Brand Ambassador/Customer/Expert/Protagonist",
+    "role": "Narrator/Brand Ambassador/Customer/Expert",
     "age": "approximate age as number string",
     "gender": "Male/Female/Other",
     "appearance": "professional appearance: attire, presence, visual impression suitable for brand",
@@ -74,15 +78,37 @@ Return this exact format:
   }
 ]
 
-Return ONLY the JSON array. Nothing else.`;
+Return ONLY the JSON array with exactly 1 element. Nothing else.`;
 
-    const marketingScriptPrompt = `You are an award-winning commercial scriptwriter. Write a complete professional marketing/commercial screenplay for a maximum 60-second video.
+    const marketingScriptPrompt = `You are an award-winning commercial scriptwriter. Write a complete professional marketing/commercial screenplay for an EXACTLY 45-second video.
 
 MARKETING BRIEF: ${story}
-SPEAKERS: PLACEHOLDER
+SPEAKER: PLACEHOLDER
 
-FORMAT: Write as a professional TV commercial / brand video script. Maximum 6 scenes.
-STRUCTURE: Hook (5s) → Problem (10s) → Solution (20s) → Proof/Benefit (15s) → Call to Action (10s)
+PRIORITY RULE — HIGHEST PRIORITY TO USER DETAILS:
+1. The user's explicitly provided details always have the HIGHEST PRIORITY.
+2. If the user provides specific information about the product, brand, features, target audience, dialogue, or character, preserve and follow those details accurately.
+3. If the user provides EXACT QUOTED LINES for the character, use those lines VERBATIM — do NOT paraphrase, rewrite, or improve them.
+4. Only add creative content for moments the user did NOT specify — never replace or alter user-provided content.
+5. If the user does NOT provide specific information, use creative intelligence to make the ad compelling and awesome.
+
+SINGLE CHARACTER RULE — NON-NEGOTIABLE:
+Only ONE character (listed above as SPEAKER) may have speaking dialogue in this entire script.
+All dialogue lines belong to this single character only.
+Do NOT write scenes where multiple characters speak to each other.
+If you need a second voice, use action lines or on-screen text instead.
+
+MANDATORY 45-SECOND RUNTIME — NON-NEGOTIABLE:
+- Write EXACTLY 85 TO 95 SPOKEN WORDS total across all dialogue/narration lines.
+- (~38-40 seconds of spoken audio + 5-7 seconds of visual action beats = EXACTLY 45 seconds)
+- Write 5 to 6 complete, rich spoken sentences across 4 scenes.
+- NEVER write less than 85 spoken words. NEVER write more than 95 spoken words.
+- Maximum 4 scenes only.
+
+COMMERCIAL STRUCTURE (EXACTLY 45 SECONDS):
+Hook (0-10s) → Product Introduction (10-22s) → Features & Experience (22-35s) → Strong CTA & Ending (35-45s).
+
+FORMAT: Write as a professional TV commercial / brand video script.
 LANGUAGE: Persuasive, professional, emotionally resonant. Every word earns its place.
 TONE: Confident, inspiring, authentic. Never salesy or gimmicky.
 
@@ -156,6 +182,12 @@ PRIORITY RULE — HIGHEST PRIORITY TO USER DETAILS:
 2. If the user provides specific information about characters, personalities, relationships, setting, events, or storyline, preserve and follow those details accurately. Do not contradict, replace, or remove important information provided by the user.
 3. If the user does NOT provide specific information, creatively fill missing details with appropriate, attractive, and contextually relevant ideas.
 
+USER DIALOGUE VERBATIM RULE — NON-NEGOTIABLE:
+- If the user's story contains explicit quoted dialogue ("..."), those exact words are FINAL and CANONICAL.
+- Copy them VERBATIM into the screenplay dialogue blocks. Do NOT paraphrase, reorder, shorten, or improve them.
+- Only write NEW creative dialogue for scenes or character moments the user has NOT provided explicit lines for.
+- Never replace or reword a user-provided quote, even if you think it could be improved.
+
 GENERIC INPUT HANDLING:
 If the user's story input is short or generic (e.g. "Two friends meet after many years"), do not produce a short or incomplete script. Intelligently expand the concept into a complete, creative, and visually attractive 45-second video script:
 - Develop the setting, emotions, character interaction, dialogue, emotional build-up/conflict, and satisfying ending to create a complete 45-second cinematic story.
@@ -168,6 +200,12 @@ HARD RUNTIME & NARRATIVE STRUCTURE CONSTRAINT — 45 SECONDS TOTAL:
    - Write 5 to 6 complete, rich, meaningful spoken dialogue lines across 4 scenes.
    - NEVER WRITE SHORT DIALOGUE UNDER 85 SPOKEN WORDS (do NOT produce 40, 50, or 60 word scripts).
 3. SCENE BUDGET: 3 to 4 scenes max with rich dialogue in each scene. Do NOT write short single-sentence scenes.
+
+STRICT CHARACTER RULE — NON-NEGOTIABLE:
+- ONLY the characters listed above (max 3) may have speaking dialogue in this screenplay.
+- Do NOT introduce any new speaking characters, unnamed extras, or entities not present in the character list above.
+- If you need a voice or presence not in the list, use action lines (scene description/narration) instead of dialogue.
+- Maximum 3 speaking characters. Minimum 1 speaking character.
 
 MANDATORY NARRATIVE COMPLETION RULE:
 - If the input story or dialogue snippet cuts off abruptly or ends on an unanswered question (e.g. "What about you?"), you MUST naturally resolve it.
@@ -396,6 +434,54 @@ Write the complete screenplay now. Start with FADE IN: and end with FADE OUT.`;
       }
     }
 
+    // ── Character Count Enforcement ─────────────────────────────────────────────
+    // CRITICAL: Marketing = exactly 1 speaking character. Story = max 3 characters.
+    if (isMarketing) {
+      // Marketing: enforce exactly 1 character — keep the highest-dialogue one
+      if (characters.length > 1) {
+        characters = characters
+          .sort((a, b) => (b.dialogueCount || 0) - (a.dialogueCount || 0))
+          .slice(0, 1);
+      }
+      // Ensure at least 1 character exists for marketing
+      if (characters.length === 0) {
+        characters = [{
+          name: "ALEX",
+          role: "Brand Ambassador",
+          gender: "Unspecified",
+          age: "25-30",
+          dialogueCount: 5,
+          description: "Warm, relatable, and camera-ready brand ambassador.",
+          appearance: "Professional, camera-ready presence.",
+          clothing: "Brand-appropriate modern attire.",
+          personality: "Friendly, engaging, and trustworthy on camera.",
+          emotion: "confident"
+        }];
+      }
+    } else {
+      // Story: enforce max 3 characters — keep top 3 by dialogue activity
+      if (characters.length > 3) {
+        characters = characters
+          .sort((a, b) => (b.dialogueCount || 0) - (a.dialogueCount || 0))
+          .slice(0, 3);
+      }
+      // Ensure at least 1 character exists for story
+      if (characters.length === 0) {
+        characters = [{
+          name: "PROTAGONIST",
+          role: "Protagonist",
+          gender: "Unspecified",
+          age: "Unspecified",
+          dialogueCount: 1,
+          description: "The central figure of the story.",
+          appearance: "The central figure of the story, defined through their actions.",
+          clothing: "Not described in the original story.",
+          personality: "Driven by the story's central conflict.",
+          emotion: "hopeful"
+        }];
+      }
+    }
+
     // Step 2: Build the script prompt with actual character names substituted
     const charListStr = characters.map(c => `${c.name} (${c.role}, ${c.age}, ${c.gender})`).join(", ");
     const scriptPrompt = isMarketing
@@ -451,6 +537,14 @@ Write the complete screenplay now. Start with FADE IN: and end with FADE OUT.`;
         }
       }
       claudeDialogueList = trimmedList;
+    }
+
+    // Minimum Word Floor Check: Warn if dialogue is too short for a 45-second video
+    const totalSpokenWords = claudeDialogueList.reduce(
+      (acc, d) => acc + (d.quote || "").trim().split(/\s+/).filter(Boolean).length, 0
+    );
+    if (totalSpokenWords > 0 && totalSpokenWords < 75) {
+      console.warn(`[45s Budget WARNING] Dialogue too short: ${totalSpokenWords} spoken words. Target is 85-95 words for a 45-second video.`);
     }
 
     let sceneWordAcc = 0;
