@@ -268,7 +268,8 @@ export default function Home() {
 
         sessionStorage.setItem("scenicaResult", JSON.stringify(data));
         sessionStorage.setItem("scenicaStory", story);
-               router.push(showCharacter ? "/characters" : "/script");
+        sessionStorage.removeItem("scenicaDialogueRows"); // clear stale enhanced rows for new generation
+        router.push(showCharacter ? "/characters" : "/script");
       } else {
         setLoadingStep("Analysing your story...");
         await new Promise(r => setTimeout(r, 800));
@@ -290,6 +291,7 @@ export default function Home() {
 
         sessionStorage.setItem("scenicaResult", JSON.stringify(data));
         sessionStorage.setItem("scenicaStory", story);
+        sessionStorage.removeItem("scenicaDialogueRows"); // clear stale enhanced rows for new generation
         router.push("/characters");
       }
 
