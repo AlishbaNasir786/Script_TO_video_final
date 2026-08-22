@@ -337,6 +337,19 @@ export default function Characters() {
 
     const storyText = sessionStorage.getItem("scenicaStory") || "";
 
+    // ── Enhancement guard: restore already-enhanced rows and skip re-enhancement ──
+    const savedRows = sessionStorage.getItem("scenicaDialogueRows");
+    if (savedRows) {
+      try {
+        const restoredRows = JSON.parse(savedRows);
+        if (Array.isArray(restoredRows) && restoredRows.length > 0 && restoredRows.every(r => r.status === "done")) {
+          setResult(parsed);
+          setDialogueRows(restoredRows);
+          return; // Skip buildRowsFromScenes + autoEnhanceAll entirely
+        }
+      } catch (e) { /* ignore parse error, fall through to normal init */ }
+    }
+
     // ── UNIVERSAL NON-CHARACTER name guard ─────────────────────────────────
     // Strip pronouns, articles, conjunctions from whatever /api/generate returned.
     // This is a safety net against any upstream extraction bugs.
@@ -549,7 +562,9 @@ export default function Characters() {
       }
 
       setDialogueRows(cappedRows);
-      if (cappedRows.length > 0) autoEnhanceAll(cappedRows, parsed);
+      // Only run enhancement if rows are not already enhanced (first visit from script page)
+      const alreadyEnhanced = cappedRows.length > 0 && cappedRows.every(r => r.status === "done" && r.enhanced);
+      if (cappedRows.length > 0 && !alreadyEnhanced) autoEnhanceAll(cappedRows, parsed);
 
       // Sync new speakers into character cards
       if (rows.length > 0) {
@@ -746,6 +761,12 @@ export default function Characters() {
 
     setEnhancingRowIdx(null);
     setIsEnhancingAll(false);
+
+    // Persist the fully-enhanced rows so re-visiting this page restores them statically
+    setDialogueRows(prev => {
+      sessionStorage.setItem("scenicaDialogueRows", JSON.stringify(prev));
+      return prev;
+    });
   };
 
   if (!result) return (
