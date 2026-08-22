@@ -87,7 +87,7 @@ export async function POST(request) {
         prompt,
         num_images: 1,
         aspect_ratio: "3:4",     // portrait framing, full body fits
-        output_format: "png",
+        output_format: "jpeg",
       }),
     });
 
