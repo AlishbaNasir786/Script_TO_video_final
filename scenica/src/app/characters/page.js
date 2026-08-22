@@ -384,7 +384,8 @@ export default function Characters() {
     }
 
     // ── Auto-recover character list if empty after guard above ───────────────
-    if (!parsed.characters || !Array.isArray(parsed.characters) || parsed.characters.length === 0) {
+        const isProductOnly = parsed.showCharacter === false;
+    if (!isProductOnly && (!parsed.characters || !Array.isArray(parsed.characters) || parsed.characters.length === 0)) {
       // Priority 1: extract from parsed scenes (dialogue attribution already done by Claude)
       const sceneChars = new Set();
       (parsed.scenes || []).forEach(sc => {
@@ -638,6 +639,85 @@ export default function Characters() {
     sessionStorage.setItem("scenicaResult", JSON.stringify(updatedResult));
   };
 
+      useEffect(() => {
+    if (!result?.characters?.length) return;
+    const pending = result.characters.filter(c => !c.imageUrl);
+    if (pending.length === 0) return;
+    let cancelled = false;
+    console.log("AUTO-PORTRAIT starting for:", pending.map(c => c.name));
+
+    const cacheKey = (ch) => `${ch.name}|${(ch.appearance || "").slice(0, 40)}`;
+
+    const apply = (ch, url, prompt) => {
+      if (cancelled) return;
+      setResult(prev => {
+        const chars = prev.characters.map(c =>
+          c.name === ch.name ? { ...c, imageUrl: url, imagePrompt: prompt } : c
+        );
+        const next = { ...prev, characters: chars };
+        sessionStorage.setItem("scenicaResult", JSON.stringify(next));
+        return next;
+      });
+      setSelected(prev =>
+        prev && prev.name === ch.name ? { ...prev, imageUrl: url, imagePrompt: prompt } : prev
+      );
+    };
+
+    Promise.allSettled(pending.map(async (ch) => {
+      const saved = JSON.parse(sessionStorage.getItem("scenicaPortraits") || "{}");
+      if (saved[cacheKey(ch)]) {
+        apply(ch, saved[cacheKey(ch)].url, saved[cacheKey(ch)].prompt);
+        return;
+      }
+      const res = await fetch("/api/portraits", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ character: ch }),
+      });
+      const data = await res.json();
+      if (data.error || !data.imageUrl) throw new Error(data.error || "no image returned");
+      const map = JSON.parse(sessionStorage.getItem("scenicaPortraits") || "{}");
+      map[cacheKey(ch)] = { url: data.imageUrl, prompt: data.promptUsed };
+      sessionStorage.setItem("scenicaPortraits", JSON.stringify(map));
+      apply(ch, data.imageUrl, data.promptUsed);
+    })).then(results => {
+      results.forEach((r, i) => {
+        if (r.status === "rejected") console.error("AUTO-PORTRAIT failed:", pending[i].name, String(r.reason));
+      });
+    });
+
+    return () => { cancelled = true; };
+  }, [result?.characters?.map(c => `${c.name}:${c.imageUrl ? 1 : 0}`).join("|")]);
+
+    const [portraitLoading, setPortraitLoading] = useState(false);
+
+  async function generatePortrait() {
+    if (!selected || portraitLoading) return;
+    setPortraitLoading(true);
+    try {
+      const res = await fetch("/api/portraits", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ character: selected }),
+      });
+      const data = await res.json();
+      if (!data.imageUrl) throw new Error(data.error || "No image returned");
+
+      const updatedChars = (result.characters || []).map(c =>
+        c.name === selected.name
+          ? { ...c, imageUrl: data.imageUrl, imagePrompt: data.promptUsed }
+          : c
+      );
+      const updatedResult = { ...result, characters: updatedChars };
+      setResult(updatedResult);
+      setSelected(updatedChars.find(c => c.name === selected.name));
+      sessionStorage.setItem("scenicaResult", JSON.stringify(updatedResult));
+    } catch (e) {
+      alert("Image generation failed: " + e.message);
+    } finally {
+      setPortraitLoading(false);
+    }
+  }
   const handleEnhanceLine = async (lineText, idx) => {
     if (!selected || !result) return;
     setEnhancingIndex(idx);
@@ -700,6 +780,15 @@ export default function Characters() {
       const row = initialRows[idx];
       setEnhancingRowIdx(idx);
       setDialogueRows(prev => prev.map((r, i) => i === idx ? { ...r, status: "loading" } : r));
+ // Never rewrite dialogue the user quoted directly in their story
+      const userQuoted = storyText && row.original &&
+        storyText.replace(/\s+/g, " ").includes(row.original.replace(/\.$/, "").trim());
+      if (userQuoted) {
+        setDialogueRows(prev => prev.map((r, i) =>
+          i === idx ? { ...r, enhanced: row.original, status: "done" } : r
+        ));
+        continue;
+      }
 
       let newLine = "";
       try {
@@ -846,7 +935,12 @@ export default function Characters() {
                   {/* Avatar */}
                   <div style={{ display: "flex", justifyContent: "center", paddingTop: "24px", paddingBottom: "8px" }}>
                     <div style={{ borderRadius: "14px", overflow: "hidden", boxShadow: isSel ? "0 0 32px rgba(214,189,152,0.3)" : "0 4px 24px rgba(0,0,0,0.5)" }}>
-                      <CharacterAvatar char={char} size={180} />
+                                           {char.imageUrl ? (
+                        <img src={char.imageUrl} alt={char.name}
+                          style={{ width: 180, height: 220, objectFit: "cover", borderRadius: 14 }} />
+                      ) : (
+                        <CharacterAvatar char={char} size={180} />
+                      )}
                     </div>
                   </div>
 
@@ -891,7 +985,18 @@ export default function Characters() {
               {/* Avatar header */}
               <div style={{ background: "linear-gradient(160deg,rgba(64,83,76,0.8),rgba(26,54,54,1))", padding: "32px", display: "flex", alignItems: "center", gap: "24px", borderBottom: "2.5px solid rgba(103,125,106,0.5)" }}>
                 <div style={{ borderRadius: "16px", overflow: "hidden", boxShadow: "0 0 40px rgba(214,189,152,0.2), 0 8px 32px rgba(0,0,0,0.6)", flexShrink: 0 }}>
-                  <CharacterAvatar char={selected} size={120} />
+                  {selected.imageUrl ? (
+  <img src={selected.imageUrl} alt={selected.name}
+    style={{ width: 120, height: 160, objectFit: "cover", borderRadius: 12 }} />
+) : (
+  <CharacterAvatar char={selected} size={120} />
+)}
+{!selected.imageUrl && (
+  <button onClick={generatePortrait} disabled={portraitLoading}
+    style={{ marginTop: 10, padding: "8px 14px", borderRadius: 8, cursor: "pointer" }}>
+    {portraitLoading ? "Generating…" : "Generate Image"}
+  </button>
+)}
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: "11px", color: "#677D6A", fontFamily: "system-ui", letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: "700", marginBottom: "6px" }}>{selected.role}</div>
