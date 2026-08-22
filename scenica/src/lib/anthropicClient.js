@@ -33,7 +33,15 @@ export async function extractStoryDataWithClaude(scriptText, isMarketing = false
 
 3. ALIAS UNIFICATION: If a character is called by name AND by title/role/pronoun elsewhere ("Aldric" / "the king" / "he"), treat these as ONE character, using their proper name as the canonical "name" field.
 
-4. dialogueCount: exact integer count of this character's spoken lines.
+4.APPEARANCE IS NEVER "Unspecified" — MANDATORY:
+Every character's "appearance" MUST be a concrete visual description:
+apparent age, build, skin tone, hair color/length/texture, and 2-3
+distinctive facial features. "clothing" MUST name specific garments
+and colors. If the story doesn't provide these, INVENT fitting,
+specific details consistent with the story's setting and tone.
+Generic values like "Unspecified" or "average" are forbidden.
+
+5. dialogueCount: exact integer count of this character's spoken lines.
 
 ═══ DIALOGUE ATTRIBUTION & ADAPTATION RULES ═══
 
@@ -42,12 +50,24 @@ export async function extractStoryDataWithClaude(scriptText, isMarketing = false
 
 2. IF THE STORY CONTAINS NO LITERAL QUOTATION MARKS ("..."):
    The story describes speech or interactions through narrative prose (e.g., "MIRA asks why the door is opening...", "The KEEPER replies that it only opens...").
-   In this case, you MUST adapt the narrated speech into 3–7 direct screenplay dialogue lines spoken back and forth by the characters.
+   In this case, you MUST adapt the narrated speech into 7-9 direct screenplay dialogue lines spoken back and forth by the characters.
    For example:
    - "MIRA asks why the door is opening now after being sealed for centuries." → speaker: "MIRA", quote: "Why is this door opening now after being sealed for centuries?"
    - "The KEEPER replies that it only opens when the person who originally sealed it returns." → speaker: "KEEPER", quote: "Because it only opens when the person who originally sealed it returns."
    - "MIRA asks if she was the one who sealed it." → speaker: "MIRA", quote: "You mean I was the one who sealed it?"
    - "The KEEPER explains that she was, but she also erased her own memory..." → speaker: "KEEPER", quote: "You were, but you also erased your memory so you would never remember."
+
+   3. TOTAL SPOKEN-WORD BUDGET — applies to EVERY story type:
+   The final "dialogue" array MUST total 85 to 95 spoken words,
+   across 7 to 9 lines, for a 45-second video.
+   - User-quoted lines are always included VERBATIM, in story order,
+     and count toward the budget.
+   - If the user's quotes alone fall short of 85 words, ADD new
+     in-character dialogue lines around them (never rewriting or
+     removing the user's lines) until the total reaches 85 to 95.
+   - If the story's quotes exceed 95 words, keep the earliest lines
+     verbatim up to the budget.
+   - Never exceed 95 words total.
 
 CRITICAL MANDATE: EVERY story — whether it contains explicit quotation marks or narrated/indirect speech — MUST return dialogue entries in your JSON output. Never return an empty "dialogue" array if characters communicate in any way.
 

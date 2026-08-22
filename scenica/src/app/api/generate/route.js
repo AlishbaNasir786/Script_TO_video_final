@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { extractStoryDataWithClaude, callClaude } from "@/lib/anthropicClient";
+import { runDialogueLock } from "@/lib/dialogueLock";
 
 function isMeaningfulInput(text) {
   if (!text || typeof text !== "string") return false;
@@ -101,7 +102,7 @@ If you need a second voice, use action lines or on-screen text instead.
 MANDATORY 45-SECOND RUNTIME — NON-NEGOTIABLE:
 - Write EXACTLY 85 TO 95 SPOKEN WORDS total across all dialogue/narration lines.
 - (~38-40 seconds of spoken audio + 5-7 seconds of visual action beats = EXACTLY 45 seconds)
-- Write 5 to 6 complete, rich spoken sentences across 4 scenes.
+- Write 9 to 10 complete, rich spoken sentences across 4 scenes.
 - NEVER write less than 85 spoken words. NEVER write more than 95 spoken words.
 - Maximum 4 scenes only.
 
@@ -197,7 +198,7 @@ HARD RUNTIME & NARRATIVE STRUCTURE CONSTRAINT — 45 SECONDS TOTAL:
    - Strong Introduction (0-12s) → Development & Build-up (12-25s) → Climax / Reveal (25-36s) → Satisfying Resolution & Ending (36-45s).
 2. MANDATORY SPOKEN DIALOGUE BUDGET — NON-NEGOTIABLE:
    - You MUST write EXACTLY 85 TO 95 SPOKEN WORDS total across all character dialogue blocks (~38 to 40 seconds of pure spoken audio + 5 to 7 seconds of visual action beats and pauses = EXACTLY 45 SECONDS TOTAL VIDEO DURATION).
-   - Write 5 to 6 complete, rich, meaningful spoken dialogue lines across 4 scenes.
+   - Write 9 to 10 complete, rich, meaningful spoken dialogue lines across 4 scenes.
    - NEVER WRITE SHORT DIALOGUE UNDER 85 SPOKEN WORDS (do NOT produce 40, 50, or 60 word scripts).
 3. SCENE BUDGET: 3 to 4 scenes max with rich dialogue in each scene. Do NOT write short single-sentence scenes.
 
@@ -484,13 +485,69 @@ Write the complete screenplay now. Start with FADE IN: and end with FADE OUT.`;
 
     // Step 2: Build the script prompt with actual character names substituted
     const charListStr = characters.map(c => `${c.name} (${c.role}, ${c.age}, ${c.gender})`).join(", ");
-    const scriptPrompt = isMarketing
+    let scriptPrompt = isMarketing
       ? marketingScriptPrompt.replace("PLACEHOLDER", charListStr)
       : storyScriptPrompt.replace("PLACEHOLDER", charListStr);
+          // ── Single source of truth: trim the extracted dialogue to the 45s
+    // word budget FIRST, then force the screenplay pass to copy it verbatim.
+    if (!isMarketing && Array.isArray(claudeDialogueList) && claudeDialogueList.length > 0) {
+      let wordAcc = 0;
+      claudeDialogueList = claudeDialogueList.filter(d => {
+        const w = (d.quote || "").trim().split(/\s+/).filter(Boolean).length;
+        if (wordAcc + w <= 98 || wordAcc === 0) { wordAcc += w; return true; }
+        return false;
+      });
+
+      const canonicalBlock = claudeDialogueList
+        .map((d, i) => `${i + 1}. ${d.speaker}: ${d.quote}`)
+        .join("\n");
+
+      scriptPrompt += `
+
+CANONICAL DIALOGUE — OVERRIDES EVERY DIALOGUE RULE ABOVE:
+The numbered lines below are the ONLY dialogue permitted in this screenplay.
+
+${canonicalBlock}
+
+RULES:
+- Use every line exactly once, in this exact order.
+- Copy each line CHARACTER FOR CHARACTER — no rephrasing, shortening,
+  expanding, grammar fixes, or punctuation changes.
+- Do NOT invent any additional dialogue lines.
+- Keep the speaker assigned to each line.
+- Your only creative work is the scene headings, action lines and
+  parentheticals BETWEEN these lines.
+- Ignore earlier instructions about line counts or word counts —
+  the list above is the complete and final set.`;
+    }
+          // Feed the extracted dialogue into the screenplay pass as FIXED input
+    const canonicalBlock = (claudeDialogueList || [])
+      .map((d, i) => `${i + 1}. ${d.speaker}: ${d.quote}`)
+      .join("\n");
+
+    const finalScriptPrompt = canonicalBlock
+      ? `${scriptPrompt}
+
+CANONICAL DIALOGUE — OVERRIDES EVERY DIALOGUE RULE ABOVE:
+The numbered lines below are the ONLY dialogue permitted.
+
+${canonicalBlock}
+
+RULES:
+- Use every line exactly once, in this exact order.
+- Copy each line CHARACTER FOR CHARACTER. Do not rephrase, shorten,
+  expand, fix grammar, or change punctuation.
+- Do NOT invent any additional dialogue.
+- Keep the speaker assigned to each line.
+- Your only creative work is scene headings, action lines and
+  parentheticals BETWEEN these lines.
+- Ignore earlier instructions about how many lines or words to write.
+  The list above is the complete set.`
+      : scriptPrompt;
 
     let rawScreenplay = "";
     try {
-      rawScreenplay = await callClaude(scriptPrompt, "You are a professional Hollywood screenplay writer.");
+      rawScreenplay = await callClaude(finalScriptPrompt, "You are a professional Hollywood screenplay writer.");
     } catch (e) {
       console.warn("Claude screenplay generation failed, using local fallback:", e.message);
       const fallbackResult = await buildFallbackScreenplayAndCharacters(story, characters, isMarketing);
@@ -523,44 +580,9 @@ Write the complete screenplay now. Start with FADE IN: and end with FADE OUT.`;
       scenes = scenes.slice(0, 4);
     }
 
-    // Word Budget Trimmer: Cap total spoken dialogue to 95 words max (~45s max)
-    let totalWordCount = 0;
-    if (Array.isArray(claudeDialogueList) && claudeDialogueList.length > 0) {
-      const trimmedList = [];
-      for (const item of claudeDialogueList) {
-        const wCount = (item.quote || "").trim().split(/\s+/).filter(Boolean).length;
-        if (totalWordCount + wCount <= 98 || trimmedList.length === 0) {
-          trimmedList.push(item);
-          totalWordCount += wCount;
-        } else {
-          break;
-        }
-      }
-      claudeDialogueList = trimmedList;
-    }
-
-    // Minimum Word Floor Check: Warn if dialogue is too short for a 45-second video
-    const totalSpokenWords = claudeDialogueList.reduce(
-      (acc, d) => acc + (d.quote || "").trim().split(/\s+/).filter(Boolean).length, 0
-    );
-    if (totalSpokenWords > 0 && totalSpokenWords < 75) {
-      console.warn(`[45s Budget WARNING] Dialogue too short: ${totalSpokenWords} spoken words. Target is 85-95 words for a 45-second video.`);
-    }
-
-    let sceneWordAcc = 0;
-    scenes = scenes.map(sc => {
-      const trimmedDialogue = [];
-      for (const d of (sc.dialogue || [])) {
-        const wCount = (d.text || "").trim().split(/\s+/).filter(Boolean).length;
-        if (sceneWordAcc + wCount <= 98 || trimmedDialogue.length === 0) {
-          trimmedDialogue.push(d);
-          sceneWordAcc += wCount;
-        } else {
-          break;
-        }
-      }
-      return { ...sc, dialogue: trimmedDialogue };
-    }).filter(sc => (sc.dialogue && sc.dialogue.length > 0) || (sc.action && sc.action.length > 10));
+    // Lock scene dialogue to canonical page-2 quotes, add timing + segments
+    const locked = runDialogueLock(scenes, claudeDialogueList);
+    scenes = locked.scenes;
 
     return NextResponse.json({
       success: true,
@@ -571,7 +593,8 @@ Write the complete screenplay now. Start with FADE IN: and end with FADE OUT.`;
       genre: isMarketing ? "marketing" : (scriptStyle || "hollywood"),
       tone: isMarketing ? "professional" : (toneStyle || "warm"),
       purposeMode: purposeMode || "story",
-      estimatedSeconds: 45
+      estimatedSeconds: 45,
+      timingReport: locked.timingReport
     });
 
   } catch (error) {
