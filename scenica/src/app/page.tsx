@@ -244,6 +244,7 @@ export default function Home() {
   };
 
   const handleGenerate = async () => {
+    if (!purposeMode) return;
     if (!story.trim()) return;
     setError("");
     setIsGenerating(true);
@@ -793,27 +794,32 @@ export default function Home() {
           )}
 
           {/* Generate Button */}
+          {!purposeMode && (
+            <p style={{ textAlign: "center", marginBottom: "12px", fontSize: "13px", color: "rgba(214,189,152,0.7)", letterSpacing: "0.06em", fontFamily: "system-ui, sans-serif", fontStyle: "italic" }}>
+              ⚠ Please select a purpose above — Story &amp; Narrative or Marketing — before continuing.
+            </p>
+          )}
           <button
             id="generate-btn"
             onClick={handleGenerate}
-            disabled={!story.trim() || isGenerating}
+            disabled={!purposeMode || !story.trim() || isGenerating}
             style={{
               width: "100%", padding: "22px",
-              background: story.trim()
+              background: (purposeMode && story.trim())
                 ? "linear-gradient(135deg, #40534C, #677D6A, #40534C)"
                 : "rgba(64,83,76,0.2)",
-              backgroundSize: story.trim() ? "250% 250%" : "auto",
-              animation: story.trim() ? "shimmer 3s ease infinite" : "none",
-              border: story.trim() ? "2.5px solid #D6BD98" : "2px solid rgba(103,125,106,0.4)",
-              borderRadius: "16px", color: story.trim() ? "#D6BD98" : "rgba(214,189,152,0.4)",
+              backgroundSize: (purposeMode && story.trim()) ? "250% 250%" : "auto",
+              animation: (purposeMode && story.trim()) ? "shimmer 3s ease infinite" : "none",
+              border: (purposeMode && story.trim()) ? "2.5px solid #D6BD98" : "2px solid rgba(103,125,106,0.4)",
+              borderRadius: "16px", color: (purposeMode && story.trim()) ? "#D6BD98" : "rgba(214,189,152,0.4)",
               fontSize: "15px", letterSpacing: "0.14em",
-              cursor: story.trim() ? "pointer" : "not-allowed",
+              cursor: (purposeMode && story.trim()) ? "pointer" : "not-allowed",
               fontFamily: "system-ui, sans-serif", fontWeight: "600",
-              boxShadow: story.trim() ? "0 8px 48px rgba(64,83,76,0.6)" : "none",
+              boxShadow: (purposeMode && story.trim()) ? "0 8px 48px rgba(64,83,76,0.6)" : "none",
               textTransform: "uppercase", transition: "all 0.3s"
             }}
-            onMouseEnter={e => { if (story.trim()) { (e.target as HTMLButtonElement).style.boxShadow = "0 14px 64px rgba(103,125,106,0.6)"; (e.target as HTMLButtonElement).style.transform = "translateY(-2px)"; }}}
-            onMouseLeave={e => { if (story.trim()) { (e.target as HTMLButtonElement).style.boxShadow = "0 8px 48px rgba(64,83,76,0.6)"; (e.target as HTMLButtonElement).style.transform = "translateY(0)"; }}}
+            onMouseEnter={e => { if (purposeMode && story.trim()) { (e.target as HTMLButtonElement).style.boxShadow = "0 14px 64px rgba(103,125,106,0.6)"; (e.target as HTMLButtonElement).style.transform = "translateY(-2px)"; }}}
+            onMouseLeave={e => { if (purposeMode && story.trim()) { (e.target as HTMLButtonElement).style.boxShadow = "0 8px 48px rgba(64,83,76,0.6)"; (e.target as HTMLButtonElement).style.transform = "translateY(0)"; }}}
           >
             {isGenerating
               ? "✦  Creating your cinematic story..."

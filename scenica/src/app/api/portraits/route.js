@@ -77,19 +77,51 @@ export async function POST(request) {
 
     const prompt = buildPortraitPrompt(character);
 
-    const falRes = await fetch(`https://fal.run/${FAL_MODEL}`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Key ${process.env.FAL_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        prompt,
-        num_images: 1,
-        aspect_ratio: "3:4",     // portrait framing, full body fits
-        output_format: "jpeg",
-      }),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000); // 30 s hard limit
+
+    let falRes;
+    try {
+      falRes = await fetch(`https://fal.run/${FAL_MODEL}`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Key ${process.env.FAL_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          prompt,
+          num_images: 1,
+          aspect_ratio: "3:4",     // portrait framing, full body fits
+          output_format: "jpeg",
+        }),
+        signal: controller.signal,
+      });
+    } catch (fetchErr) {
+      // Retry once on transient network failure
+      console.warn("fal fetch failed, retrying once...", fetchErr.message);
+      const controller2 = new AbortController();
+      const timeout2 = setTimeout(() => controller2.abort(), 30000);
+      try {
+        falRes = await fetch(`https://fal.run/${FAL_MODEL}`, {
+          method: "POST",
+          headers: {
+            "Authorization": `Key ${process.env.FAL_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            prompt,
+            num_images: 1,
+            aspect_ratio: "3:4",
+            output_format: "jpeg",
+          }),
+          signal: controller2.signal,
+        });
+      } finally {
+        clearTimeout(timeout2);
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!falRes.ok) {
       const detail = await falRes.text().catch(() => "");
