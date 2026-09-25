@@ -6,7 +6,7 @@
 // words — not a paraphrase.
 //
 // Also attaches the timing + segment data the VIDEO stage needs for a fixed
-// 45-second output rendered as 30s + 15s Seedance generations.
+// 45-second output rendered as 3x 15s Seedance generations.
 //
 // This file is purely additive. It does not modify any existing behaviour
 // unless you call these functions from /api/generate/route.js.
@@ -14,7 +14,9 @@
 
 const WORDS_PER_SECOND = 2.5;   // natural on-camera delivery rate
 const TOTAL_SECONDS    = 45;
-const SEGMENT_A_END    = 30;    // Seedance generates 30s natively; cut goes here
+const SEGMENT_DURATION = 15;
+const SEGMENT_A_END    = 15;
+const SEGMENT_B_END    = 30;
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -138,8 +140,9 @@ export function lockDialogueToCanonical(scenes, canonicalDialogue) {
 // distributed across scenes as action/breathing room, so the total always
 // lands on exactly 45.
 //
-// segment: "A" = 0-30s  (first Seedance generation)
-//          "B" = 30-45s (second generation, stitched with FFmpeg)
+// segment: "A" = 0-15s  (first Seedance generation)
+//          "B" = 15-30s (second generation)
+//          "C" = 30-45s (third generation, stitched with FFmpeg)
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function attachTiming(scenes) {
@@ -162,13 +165,17 @@ export function attachTiming(scenes) {
     let end = i === scenes.length - 1 ? TOTAL_SECONDS : cursor + duration;
     cursor = end;
 
+    let segment = "C";
+    if (start < SEGMENT_A_END) segment = "A";
+    else if (start < SEGMENT_B_END) segment = "B";
+
     return {
       ...sc,
       startSecond: Math.round(start * 10) / 10,
       endSecond: Math.round(end * 10) / 10,
       durationSeconds: Math.round((end - start) * 10) / 10,
       spokenWords: spokenPerScene[i],
-      segment: start < SEGMENT_A_END ? "A" : "B"
+      segment
     };
   });
 
@@ -200,24 +207,26 @@ export function validateFortyFive(scenes, totalSpokenWords, unmatched) {
     warnings.push(`${unmatched.length} script line(s) do not match any character-page dialogue. Page 2 and page 3 will disagree on these.`);
   }
 
-  // Does any scene straddle the 30s cut?
-  const straddling = (scenes || []).filter(
-    sc => sc.startSecond < SEGMENT_A_END && sc.endSecond > SEGMENT_A_END
-  );
+  const cutBoundaries = [SEGMENT_A_END, SEGMENT_B_END, TOTAL_SECONDS];
+  const straddling = (scenes || []).filter(sc => {
+    return cutBoundaries.some((boundary) => sc.startSecond < boundary && sc.endSecond > boundary);
+  });
   if (straddling.length > 0) {
-    warnings.push(`Scene ${straddling.map(s => s.id).join(", ")} crosses the 30s stitch point. Voice will change mid-scene. Restructure so a scene boundary lands on 30s.`);
+    warnings.push(`Scene ${straddling.map(s => s.id).join(", ")} crosses a 15s stitch point. Voice will change mid-scene. Restructure so a scene boundary lands on 15s increments.`);
   }
 
   const segmentA = (scenes || []).filter(s => s.segment === "A");
   const segmentB = (scenes || []).filter(s => s.segment === "B");
-  if (segmentB.length === 0) {
-    warnings.push("All scenes fall in segment A. Nothing to render in the second 15s generation.");
+  const segmentC = (scenes || []).filter(s => s.segment === "C");
+  if (segmentB.length === 0 || segmentC.length === 0) {
+    warnings.push("The 45s script is not distributed across all three 15s segments. It should be split into A/B/C clips for a seamless final render.");
   }
 
   return {
     warnings,
     segmentA: segmentA.map(s => s.id),
     segmentB: segmentB.map(s => s.id),
+    segmentC: segmentC.map(s => s.id),
     totalSpokenWords,
     estimatedSpeakingSeconds: Math.round((totalSpokenWords / WORDS_PER_SECOND) * 10) / 10
   };

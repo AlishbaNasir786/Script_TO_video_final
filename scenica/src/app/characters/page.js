@@ -920,6 +920,12 @@ export default function Characters() {
       {/* LAYOUT */}
       <section style={{ maxWidth: "1140px", margin: "0 auto", padding: "0 32px 80px", display: "flex", gap: "24px", alignItems: "flex-start" }}>
 
+        <div style={{ width: "100%", display: "flex", justifyContent: "flex-end", marginBottom: "8px" }}>
+          <button onClick={() => router.push("/video")} style={{ padding: "12px 24px", background: "linear-gradient(135deg,#40534C,#677D6A)", border: "2.5px solid #D6BD98", borderRadius: "30px", color: "#D6BD98", fontSize: "13px", cursor: "pointer", fontFamily: "system-ui", fontWeight: "600", boxShadow: "0 6px 24px rgba(26,54,54,0.5)", letterSpacing: "0.04em" }}>
+            🎬 Generate Final 45s Video
+          </button>
+        </div>
+
         {/* Cards */}
         <div style={{ flex: selected ? "0 0 420px" : "1", transition: "flex 0.35s ease" }}>
           <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 1fr" : "repeat(auto-fill,minmax(240px,1fr))", gap: "20px" }}>

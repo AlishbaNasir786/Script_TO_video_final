@@ -225,15 +225,20 @@ export default function Script() {
       </section>
 
       {/* BOTTOM */}
-      <section style={{ maxWidth: "960px", margin: "0 auto", padding: "0 32px 80px", display: "flex", gap: "14px", justifyContent: "center" }}>
+      <section style={{ maxWidth: "960px", margin: "0 auto", padding: "0 32px 80px", display: "flex", gap: "14px", justifyContent: "center", flexWrap: "wrap" }}>
         <button onClick={() => router.push("/characters")} style={{ padding: "13px 30px", background: "rgba(64,83,76,0.4)", border: "2px solid rgba(103,125,106,0.5)", borderRadius: "30px", color: "#D6BD98", fontSize: "14px", cursor: "pointer", fontFamily: "system-ui", fontWeight: "500", letterSpacing: "0.04em", transition: "all 0.24s" }}
           onMouseEnter={e => { e.currentTarget.style.borderColor = "#D6BD98"; }}
           onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(103,125,106,0.5)"; }}>
           ← Back to Characters
         </button>
-        <button onClick={() => router.push("/player")} style={{ padding: "13px 30px", background: "linear-gradient(135deg,#40534C,#677D6A)", border: "2.5px solid #D6BD98", borderRadius: "30px", color: "#D6BD98", fontSize: "14px", cursor: "pointer", fontFamily: "system-ui", fontWeight: "600", letterSpacing: "0.04em", boxShadow: "0 6px 28px rgba(26,54,54,0.5)", transition: "all 0.24s" }}
+        <button onClick={() => router.push("/video")} style={{ padding: "13px 30px", background: "linear-gradient(135deg,#40534C,#677D6A)", border: "2.5px solid #D6BD98", borderRadius: "30px", color: "#D6BD98", fontSize: "14px", cursor: "pointer", fontFamily: "system-ui", fontWeight: "600", letterSpacing: "0.04em", boxShadow: "0 6px 28px rgba(26,54,54,0.5)", transition: "all 0.24s" }}
           onMouseEnter={e => { e.currentTarget.style.boxShadow = "0 8px 40px rgba(103,125,106,0.6)"; e.currentTarget.style.transform = "translateY(-2px)"; }}
           onMouseLeave={e => { e.currentTarget.style.boxShadow = "0 6px 28px rgba(26,54,54,0.5)"; e.currentTarget.style.transform = "translateY(0)"; }}>
+          🎬 Generate Final 45s Video
+        </button>
+        <button onClick={() => router.push("/player")} style={{ padding: "13px 30px", background: "rgba(64,83,76,0.4)", border: "2px solid rgba(103,125,106,0.5)", borderRadius: "30px", color: "#D6BD98", fontSize: "14px", cursor: "pointer", fontFamily: "system-ui", fontWeight: "500", letterSpacing: "0.04em", transition: "all 0.24s" }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = "#D6BD98"; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(103,125,106,0.5)"; }}>
           ▶ Play Cinematic Experience
         </button>
       </section>

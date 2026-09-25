@@ -554,16 +554,25 @@ RULES:
       const correctedScenes = claudeDialogueMap
         ? applyDialogueMap(fallbackResult.scenes, claudeDialogueMap)
         : reattributeDialogueFromStoryLegacy(fallbackResult.scenes, story, fallbackResult.characters);
+
+      // The Claude-screenplay path always runs runDialogueLock() below, which
+      // attaches startSecond/endSecond/segment to every scene. This fallback
+      // returned early before that call, so fallback-generated scripts had no
+      // timing data at all — the video stage then couldn't tell which scene
+      // belongs in clip 1/2/3 and had to split evenly by scene count instead.
+      const fallbackLocked = runDialogueLock(correctedScenes, claudeDialogueList);
+
       return NextResponse.json({
         success: true,
         characters: fallbackResult.characters,
         screenplay: fallbackResult.screenplay,
-        scenes: correctedScenes,
+        scenes: fallbackLocked.scenes,
         claudeDialogue: claudeDialogueList,
         genre: isMarketing ? "marketing" : (scriptStyle || "hollywood"),
         tone: isMarketing ? "professional" : (toneStyle || "warm"),
         purposeMode: purposeMode || "story",
-        isFallback: true
+        isFallback: true,
+        timingReport: fallbackLocked.timingReport
       });
     }
 
