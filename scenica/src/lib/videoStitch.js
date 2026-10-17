@@ -18,7 +18,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { spawn } from "child_process";
-import { resolveFfmpegPath, videoWorkRoot } from "./ffmpegPath";
+import { resolveFfmpegPath, videoWorkRoot } from "./ffmpegPath.js";
 
 const TARGET_SECONDS = 45;
 const DURATION_TOLERANCE = 0.05;
@@ -65,7 +65,7 @@ export function runFfmpeg(args, { cwd, timeoutMs = 10 * 60 * 1000 } = {}) {
 // ffmpeg-static ships no ffprobe, so read the duration out of ffmpeg's own
 // banner. `-f null -` decodes the file and reports the true output duration,
 // which is more reliable than the container header for concatenated files.
-async function probeMedia(file, cwd) {
+export async function probeMedia(file, cwd) {
   const result = await runFfmpeg(["-hide_banner", "-i", file, "-f", "null", "-"], { cwd, timeoutMs: 120000 });
   const text = result.stderr || "";
 
@@ -292,6 +292,66 @@ async function enforceExactDuration(workDir, inputName, outputName, actualSecond
     );
   }
   return { adjusted: true, outputName };
+}
+
+/**
+ * Mux the narration track (built by narration.js from the locked script,
+ * with fixed per-character voices) onto the silent, already-exactly-45s
+ * video master. `-shortest` is a safety net, not the length authority: both
+ * inputs are already exactly 45.000s by construction, so this never actually
+ * trims anything in the normal case.
+ */
+export async function muxNarration(workDir, videoFileName, narrationFileName, outputName, subtitleFileName = null) {
+  // Burning subtitles means the video stream has to be re-encoded, so the
+  // subtitle burn and the audio mux are deliberately done in ONE pass —
+  // two passes would re-encode the picture twice for no reason.
+  //
+  // The subtitle filter is given a BARE filename with cwd set to workDir.
+  // An absolute Windows path inside a filter argument is a known escaping
+  // trap (the drive-letter colon separates filter options), and this side-
+  // steps the entire class of problem exactly like the concat list does.
+  const burnsSubtitles = Boolean(subtitleFileName);
+  const hasSeparateNarration = Boolean(narrationFileName);
+
+  // With NO separate voice track, the audio (if any) has to come from the
+  // video input itself — e.g. Seedance's own baked-in dialogue
+  // (generate_audio: true). PROBING rather than assuming either way is
+  // what correctly handles both a video that genuinely carries real audio
+  // and one that doesn't (generate_audio: false, the fully-silent case) —
+  // assuming "no separate file" always meant "no audio at all" was exactly
+  // what silently stripped Seedance's own sound the one time this
+  // function ran against a video that already had it.
+  const keepsOwnAudio = !hasSeparateNarration && (await probeMedia(videoFileName, workDir)).hasAudio;
+  const hasAnyAudio = hasSeparateNarration || keepsOwnAudio;
+
+  const args = ["-y", "-hide_banner", "-i", videoFileName];
+  if (hasSeparateNarration) args.push("-i", narrationFileName);
+
+  args.push("-map", "0:v:0");
+  if (hasSeparateNarration) args.push("-map", "1:a:0");
+  else if (keepsOwnAudio) args.push("-map", "0:a:0");
+
+  if (burnsSubtitles) {
+    args.push("-vf", `subtitles=${subtitleFileName}`);
+    args.push("-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p");
+  } else {
+    args.push("-c:v", "copy");
+  }
+
+  if (hasAnyAudio) {
+    args.push("-c:a", "aac", "-b:a", "192k");
+    if (hasSeparateNarration) args.push("-shortest"); // only relevant across two separate-duration inputs
+  } else {
+    args.push("-an");
+  }
+  args.push("-movflags", "+faststart", outputName);
+
+  const result = await runFfmpeg(args, { cwd: workDir, timeoutMs: 10 * 60 * 1000 });
+
+  if (!result.ok) {
+    throw new Error(`Could not mux the narration track onto the video: ${result.stderr.slice(-600)}`);
+  }
+  return outputName;
 }
 
 /**
