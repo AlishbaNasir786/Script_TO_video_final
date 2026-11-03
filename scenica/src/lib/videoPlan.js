@@ -216,8 +216,22 @@ export function verifyScriptCoverage(scenes = [], buckets = [[], [], []]) {
 // interpretation of them.
 // ═══════════════════════════════════════════════════════════════════════════
 
-export function buildCastBible(characters = [], referenceImages = []) {
+export function buildCastBible(characters = [], referenceImages = [], options = {}) {
+  const { productOnly = false } = options;
   const cast = (characters || []).filter((character) => normaliseName(character?.name));
+
+  // A product-only commercial deliberately has no human cast. The old
+  // fallback demanded "a single consistent protagonist" in every shot, which
+  // directly contradicted that brief and put an unwanted person in frame.
+  if (productOnly) {
+    return {
+      castNames: [],
+      bible:
+        "NO HUMAN CHARACTERS: this is a product-focused commercial with no people in it. Do not show any person, face, hand, or figure. Every shot is the product itself and its setting — clean commercial photography, considered lighting, shallow depth of field, slow deliberate camera moves. The same product, the same styling and the same set dressing appear in every shot.",
+      referenceLines: ""
+    };
+  }
+
   if (cast.length === 0) {
     return {
       castNames: [],
@@ -267,6 +281,7 @@ const CONTINUITY_RULES = [
   "Keep the same cast, the same faces, the same hair, the same body shapes and heights, and the same exact costumes as the reference images and the previous clip.",
   "Keep the same location, the same set dressing, the same time of day, the same weather, the same colour grade and the same lighting direction.",
   "Keep the same camera language: same lens character, same film stock, same grain, same framing discipline.",
+  "Keep the same voice for each character in every clip — the same pitch, tone, pace and accent, as if it is the same performer throughout the whole film, not a different take on their voice each time.",
   "DO NOT add any person who is not in the locked cast list. No extra adults, no extra children, no background crowds, no passers-by, no duplicates of a cast member in the same frame.",
   "DO NOT change anyone's clothing, hairstyle, age or ethnicity at any point. No costume changes, no wardrobe drift, no character morphing between shots.",
   "DO NOT reset the scene, cut to a different location, or restart the story. This clip continues the same unbroken take."
@@ -331,27 +346,42 @@ function neutralizeContentRisk(text) {
 // Per-segment prompt
 // ═══════════════════════════════════════════════════════════════════════════
 
-function describeScenes(scenes = [], sanitize = false) {
+function describeScenes(scenes = [], sanitize = false, includeDialogue = true) {
   return scenes
     .map((scene) => {
       const heading = safeText(scene?.heading || scene?.location);
       const rawAction = safeText(scene?.action);
       const action = sanitize ? neutralizeContentRisk(rawAction) : rawAction;
-      const dialogue = (scene?.dialogue || [])
-        .map((line) => {
-          const who = normaliseName(line?.character);
-          const rawText = safeText(line?.text);
-          const text = sanitize ? neutralizeContentRisk(rawText) : rawText;
-          if (!text) return "";
-          return who ? `${who} says: "${text}"` : `"${text}"`;
-        })
-        .filter(Boolean)
-        .join(" ");
+      const dialogue = includeDialogue
+        ? (scene?.dialogue || [])
+            .map((line) => {
+              const who = normaliseName(line?.character);
+              const rawText = safeText(line?.text);
+              const text = sanitize ? neutralizeContentRisk(rawText) : rawText;
+              if (!text) return "";
+              return who ? `${who} says: "${text}"` : `"${text}"`;
+            })
+            .filter(Boolean)
+            .join(" ")
+        : "";
 
       return [heading, action, dialogue].filter(Boolean).join(" ");
     })
     .filter(Boolean)
     .join(" Then, ");
+}
+
+/**
+ * Whether a segment's prompt carries its scenes' spoken dialogue.
+ *
+ * The ONE definition of this rule. buildSegmentPrompt uses it to decide
+ * whether to quote the lines to Seedance, and the subtitle step (route.js)
+ * uses it to decide which clip a line is subtitled in — sharing it is what
+ * guarantees a subtitle only ever appears in the clip that actually speaks
+ * the line.
+ */
+export function segmentSpeaksDialogue(phase) {
+  return !(phase && phase.phaseTotal > 1 && phase.phaseIndex > 1);
 }
 
 /**
@@ -374,7 +404,26 @@ export function buildSegmentPrompt({
   phase = null
 }) {
   const window = SEGMENT_WINDOWS[segmentIndex];
-  const beat = describeScenes(scenes, contentSafetyRetry) || "The story continues without interruption in the same location with the same cast.";
+
+  // When a scene has to be reused across segments because the script is too
+  // short to give every segment its own beat (assignScenesToSegments' donor
+  // backfill, or the even-split fallback landing the same scene twice), only
+  // the FIRST occurrence (phaseIndex === 1) speaks its dialogue. This is the
+  // original fix for the duplicate-dialogue bug: Seedance is the only
+  // source of audio (generate_audio: true, route.js), so the SAME quoted
+  // line surviving into two separate prompts would make Seedance
+  // independently voice the exact same line twice. A reused occurrence
+  // gets an action-only description instead, never the dialogue again.
+  const isDonorOccurrence = !segmentSpeaksDialogue(phase);
+  // The LAST segment reusing a scene means the script ran out of story
+  // before 45 seconds did. Rather than restate the same beat a third time,
+  // close the film on a quiet, wordless scenic beat — the "sensibly stretch
+  // a short script" requirement.
+  const isClosingFiller = isDonorOccurrence && segmentIndex === SEGMENT_COUNT - 1;
+
+  const beat = isClosingFiller
+    ? "The story's spoken content has already played out earlier in the film. Close on a quiet, cinematic settling beat in the same location and with the same cast: a slow push-in or pull-back, a lingering environmental detail (light, weather, the surroundings), or a character's subtle, wordless reaction. No new dialogue, no restated action, no new plot — just the scene settling to rest."
+    : describeScenes(scenes, contentSafetyRetry, !isDonorOccurrence) || "The story continues without interruption in the same location with the same cast.";
 
   const parts = [];
 
@@ -393,7 +442,13 @@ export function buildSegmentPrompt({
       "This is the opening clip. Establish the location, the cast and the lighting cleanly — everything you establish here is locked for the remaining 30 seconds of the film."
     );
   } else {
-    const previousBeat = describeScenes(previousScenes, contentSafetyRetry);
+    // No quoted dialogue in the handoff description — this is describing
+    // what already happened in the PREVIOUS clip for continuity framing,
+    // not asking the model to perform the line again. A quote here caused
+    // Seedance to visibly re-render the line's delivery a second time even
+    // after describeScenes() above stopped repeating it in the clip's own
+    // beat.
+    const previousBeat = describeScenes(previousScenes, contentSafetyRetry, false);
     parts.push(
       `HANDOFF IN: the previous clip ended with — ${previousBeat || "the same cast mid-action in this same location"}. Begin this clip at that exact moment, with the characters in the same positions, the same costumes and the same lighting. Do not re-establish or re-introduce anything; continue the take as if no cut occurred.`
     );
@@ -414,7 +469,7 @@ export function buildSegmentPrompt({
   // script length — a one-line story still produces three visually distinct,
   // forward-progressing 15-second windows instead of one clip played three
   // times.
-  if (phase && phase.phaseTotal > 1) {
+  if (phase && phase.phaseTotal > 1 && !isClosingFiller) {
     const positionWord =
       phase.phaseIndex === 1 ? "the FIRST" : phase.phaseIndex === phase.phaseTotal ? "the FINAL" : "a LATER";
     parts.push(
@@ -422,9 +477,11 @@ export function buildSegmentPrompt({
     );
   }
 
-  // Handoff OUT of this segment.
+  // Handoff OUT of this segment. Same reasoning as HANDOFF IN above — no
+  // quoted dialogue, this is describing what's coming next for continuity,
+  // not a cue for the model to perform it early.
   if (segmentIndex < SEGMENT_COUNT - 1) {
-    const nextBeat = describeScenes(nextScenes, contentSafetyRetry);
+    const nextBeat = describeScenes(nextScenes, contentSafetyRetry, false);
     parts.push(
       `HANDOFF OUT: end this clip on a stable, continuing moment that leads directly into — ${nextBeat || "the next beat of the same scene"}. Do not fade out, do not cut to black, do not resolve the scene; the film continues immediately after this clip.`
     );
@@ -436,6 +493,39 @@ export function buildSegmentPrompt({
 
   parts.push(CONTINUITY_RULES);
   parts.push(contentSafetyRetry ? CONTENT_SAFETY_RULE_STRICT : CONTENT_SAFETY_RULE);
+  // Independent of SUBTITLES_ENABLED (route.js): Seedance hallucinating its
+  // own captions, logos or watermarks is visual noise either way, and
+  // would actively collide with our own burned-in subtitles whenever that
+  // flag is on — which it is by default.
+  parts.push(
+    "NO ON-SCREEN TEXT: do not render subtitles, captions, title cards, lower thirds, watermarks, logos or any overlaid words or numbers anywhere in the frame."
+  );
+
+  // Pacing: tell the model how much talking this window actually contains,
+  // so the action is staged to breathe with the script instead of racing
+  // through the beat or holding on a static frame.
+  const spokenWordsInWindow = scenes.reduce(
+    (sum, scene) =>
+      sum +
+      (scene?.dialogue || []).reduce(
+        (lineSum, line) => lineSum + String(line?.text || "").trim().split(/\s+/).filter(Boolean).length,
+        0
+      ),
+    0
+  );
+  if (!isDonorOccurrence && spokenWordsInWindow > 0) {
+    // ~2.5 words a second is natural on-camera delivery, the same rate the
+    // script's own timing budget is built on.
+    const speakingSeconds = Math.min(SEGMENT_DURATION, Math.round((spokenWordsInWindow / 2.5) * 10) / 10);
+    parts.push(
+      `PACING: roughly ${speakingSeconds} of this clip's ${SEGMENT_DURATION} seconds are spent speaking, so stage the action to fill the full ${SEGMENT_DURATION} seconds at that rhythm — unhurried, with the remaining time carried by held reactions and deliberate camera movement rather than rushing ahead or freezing.`
+    );
+  } else if (isDonorOccurrence) {
+    parts.push(
+      `PACING: no one speaks in this clip, so carry the full ${SEGMENT_DURATION} seconds visually — slow, deliberate movement and held beats, never a static frozen frame.`
+    );
+  }
+
   parts.push(`Exactly ${SEGMENT_DURATION} seconds long. Cinematic, filmic, single continuous take.`);
 
   return parts.filter(Boolean).join(" ");

@@ -1,22 +1,5 @@
 import { NextResponse } from "next/server";
-
-// Voice IDs from ElevenLabs free tier
-const VOICE_MAP = {
-  female: [
-    "EXAVITQu4vr4xnSDxMaL", // Sarah - warm female
-    "FGY2WhTYpPnrIDTdsKH5", // Laura - soft female
-    "XB0fDUnXU5powFXDhCwa", // Charlotte - elegant female
-  ],
-  male: [
-    "TX3LPaxmHKxFdv7VOQHJ", // Liam - young male
-    "bIHbv24MWmeRgasZH58o", // Will - deep male
-    "nPczCjzI2devNBz1zQrb", // Noah - warm male
-  ],
-  other: [
-    "TX3LPaxmHKxFdv7VOQHJ",
-    "EXAVITQu4vr4xnSDxMaL",
-  ]
-};
+import { VOICE_MAP, EMOTION_VOICE_SETTINGS } from "@/lib/elevenLabs";
 
 export async function POST(request) {
   try {
@@ -38,25 +21,10 @@ export async function POST(request) {
     const voiceId = voices[voiceIndex % voices.length];
 
     // Map emotion to voice settings
-    const emotionSettings = {
-      angry: { stability: 0.3, similarity_boost: 0.8, style: 0.8, use_speaker_boost: true },
-      sad: { stability: 0.7, similarity_boost: 0.7, style: 0.4, use_speaker_boost: false },
-      joyful: { stability: 0.4, similarity_boost: 0.75, style: 0.7, use_speaker_boost: true },
-      tense: { stability: 0.35, similarity_boost: 0.8, style: 0.75, use_speaker_boost: true },
-      romantic: { stability: 0.65, similarity_boost: 0.8, style: 0.5, use_speaker_boost: false },
-      mysterious: { stability: 0.6, similarity_boost: 0.75, style: 0.6, use_speaker_boost: false },
-      vulnerable: { stability: 0.7, similarity_boost: 0.75, style: 0.45, use_speaker_boost: false },
-      tender: { stability: 0.7, similarity_boost: 0.8, style: 0.4, use_speaker_boost: false },
-      love: { stability: 0.65, similarity_boost: 0.8, style: 0.5, use_speaker_boost: false },
-      fierce: { stability: 0.3, similarity_boost: 0.85, style: 0.8, use_speaker_boost: true },
-      determined: { stability: 0.45, similarity_boost: 0.8, style: 0.65, use_speaker_boost: true },
-      neutral: { stability: 0.5, similarity_boost: 0.75, style: 0.5, use_speaker_boost: false },
-    };
-
-    const emotionKey = Object.keys(emotionSettings).find(k =>
+    const emotionKey = Object.keys(EMOTION_VOICE_SETTINGS).find(k =>
       emotion?.toLowerCase().includes(k)
     ) || "neutral";
-    const voiceSettings = emotionSettings[emotionKey];
+    const voiceSettings = EMOTION_VOICE_SETTINGS[emotionKey];
 
     // Call ElevenLabs API
     const response = await fetch(

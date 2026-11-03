@@ -162,6 +162,12 @@ Generate the complete 45-second grounded advertisement JSON now, focusing strict
   return null;
 }
 
+// Exported under an explicit test name so the parser can be verified
+// directly, without an Anthropic call. The generator above uses it as-is.
+export function parseMarketingScreenplayForTest(screenplay, rawCharacters) {
+  return parseMarketingScreenplay(screenplay, rawCharacters);
+}
+
 function parseMarketingScreenplay(screenplay, rawCharacters) {
   const charName = (rawCharacters[0]?.name || "SPEAKER").trim().toUpperCase();
   const lines = screenplay.split("\n").map(l => l.trim()).filter(Boolean);
@@ -169,6 +175,17 @@ function parseMarketingScreenplay(screenplay, rawCharacters) {
   const scenes = [];
   let currentScene = null;
   let currentSpeaker = null;
+
+  // Accumulate visual description onto the scene it belongs to. Without
+  // this, every marketing scene reached the video stage with action: "" —
+  // so the only thing describing the shot was the location heading, and the
+  // video model had nothing to actually render. That is what made marketing
+  // videos look empty next to story videos, whose parser has always
+  // collected action lines.
+  const addAction = (text) => {
+    if (!currentScene || !text) return;
+    currentScene.action += (currentScene.action ? " " : "") + text;
+  };
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -181,18 +198,64 @@ function parseMarketingScreenplay(screenplay, rawCharacters) {
         timeOfDay: "DAY",
         action: "",
         dialogue: [],
+        onScreenText: [],
         emotion: "confident"
       };
       currentSpeaker = null;
       continue;
     }
 
-    if (line.match(/^[A-Z0-9\s._'-]{2,30}$/) && !line.includes("FADE") && !line.includes("SCENE") && !line.startsWith("[")) {
-      currentSpeaker = line.replace(/\s*\(V\.O\.\)/i, "").trim();
+    if (line.match(/^(FADE IN:|FADE OUT\.|CUT TO:|DISSOLVE TO:)/i)) {
+      currentSpeaker = null;
       continue;
     }
 
-    if (currentSpeaker && !line.startsWith("(") && !line.startsWith("[")) {
+    // Bracketed production cues.
+    if (line.startsWith("[")) {
+      const onScreen = line.match(/^\[ON-SCREEN TEXT:\s*(.+?)\]\s*$/i);
+      if (onScreen && currentScene) {
+        // Kept for the script page, but deliberately NOT pushed into the
+        // action text: the video prompt forbids readable words on screen
+        // (Fal's classifier treats rendered text as printed media), and the
+        // burned-in subtitles already carry the message.
+        currentScene.onScreenText.push(onScreen[1].replace(/^["'“”]+|["'“”]+$/g, "").trim());
+        currentSpeaker = null;
+        continue;
+      }
+      const cue = line.match(/^\[(?:PRODUCT SHOT|VISUAL|SHOT|B-ROLL|ACTION):\s*(.+?)\]\s*$/i);
+      if (cue) {
+        addAction(cue[1].trim());
+        currentSpeaker = null;
+        continue;
+      }
+      // Any other bracketed direction is still visual information.
+      addAction(line.replace(/^\[|\]$/g, "").trim());
+      currentSpeaker = null;
+      continue;
+    }
+
+    // Character cue, with any trailing parenthetical stripped first:
+    // "NARRATOR (V.O.)", "ALEX (CONT'D)", "ALEX (O.S.)".
+    //
+    // The parenthetical MUST be removed before the all-caps test, not after.
+    // The old test ran against the raw line, whose brackets are not in the
+    // allowed character set — so a "NARRATOR (V.O.)" cue never matched and
+    // every narrator line was silently dropped. In product-only commercials,
+    // where the narrator speaks all of it, that meant no dialogue survived
+    // at all: no voice track, and no subtitles.
+    const cueName = line.replace(/\s*\([^)]*\)\s*$/, "").replace(/:$/, "").trim();
+    if (
+      cueName &&
+      cueName.length <= 30 &&
+      /^[A-Z0-9][A-Z0-9\s._'-]*$/.test(cueName) &&
+      !cueName.includes("FADE") &&
+      !cueName.includes("SCENE")
+    ) {
+      currentSpeaker = cueName;
+      continue;
+    }
+
+    if (currentSpeaker && !line.startsWith("(")) {
       const text = line.replace(/^["'“”]+|["'“”]+$/g, "").trim();
       if (text.length > 3) {
         dialogueList.push({ speaker: currentSpeaker, quote: text });
@@ -208,6 +271,16 @@ function parseMarketingScreenplay(screenplay, rawCharacters) {
       currentSpeaker = null;
       continue;
     }
+
+    // Parentheticals are delivery notes, not visual description.
+    if (line.startsWith("(")) {
+      currentSpeaker = null;
+      continue;
+    }
+
+    // Anything left is prose action/description — the shot itself.
+    addAction(line);
+    currentSpeaker = null;
   }
 
   if (currentScene) scenes.push(currentScene);
@@ -220,9 +293,20 @@ function parseMarketingScreenplay(screenplay, rawCharacters) {
       timeOfDay: "DAY",
       action: "Product commercial scene",
       dialogue: dialogueList.map(d => ({ character: d.speaker, text: d.quote, parenthetical: "", emotion: "confident" })),
+      onScreenText: [],
       emotion: "confident"
     });
   }
+
+  // A scene with no visual description at all gives the video model nothing
+  // to render but a location name. Fall back to a neutral, product-focused
+  // beat derived from the heading rather than sending an empty shot.
+  scenes.forEach((scene) => {
+    if (!scene.action || !scene.action.trim()) {
+      const where = scene.location ? scene.location.toLowerCase() : "the setting";
+      scene.action = `Clean, well-lit commercial photography in ${where}, with the product presented clearly in frame.`;
+    }
+  });
 
   return { scenes, claudeDialogue: dialogueList };
 }

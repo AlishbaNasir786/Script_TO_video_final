@@ -159,8 +159,7 @@ export default function VideoPage() {
           model: modelId,
           referenceImages,
           resolution,
-          aspectRatio,
-          generateAudio: true
+          aspectRatio
         })
       });
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { generateMarketingContent } from "@/lib/marketingClient";
+import { runDialogueLock } from "@/lib/dialogueLock";
 
 function isMeaningfulInput(text) {
   if (!text || typeof text !== "string") return false;
@@ -48,16 +49,25 @@ export async function POST(request) {
       );
     }
 
+    // Attach the same word-count-weighted startSecond/endSecond/segment
+    // timing the story path gets from runDialogueLock (api/generate/route.js).
+    // Without this, marketing scenes reached /api/video with no timing at
+    // all, so the video stage fell back to an even split by scene index and
+    // narration.js fell back to an even split by scene count too — both
+    // less accurate than the real per-scene speaking-time budget.
+    const locked = runDialogueLock(result.scenes, result.claudeDialogue);
+
     return NextResponse.json({
       success: true,
       videoDescription: result.videoDescription,
       showCharacter: result.showCharacter,
       characters: result.characters,
       screenplay: result.screenplay,
-      scenes: result.scenes,
+      scenes: locked.scenes,
       claudeDialogue: result.claudeDialogue,
       estimatedSeconds: result.estimatedSeconds,
-      purposeMode: "marketing"
+      purposeMode: "marketing",
+      timingReport: locked.timingReport
     });
 
   } catch (error) {

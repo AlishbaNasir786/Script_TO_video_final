@@ -37,6 +37,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { promises as fs } from "fs";
+import path from "path";
 import { NextResponse } from "next/server";
 
 import { submitToQueue, waitForQueueResult, uploadToFalStorage, getFalKey } from "@/lib/falQueue";
@@ -48,8 +49,12 @@ import {
   extractFirstFrame,
   compareContinuity,
   stitchLocalClips,
+  muxNarration,
+  probeMedia,
   cleanupWorkDir
 } from "@/lib/videoStitch";
+import { getElevenLabsKey, verifyElevenLabsReady } from "@/lib/elevenLabs";
+import { buildSegmentSubtitles } from "@/lib/narration";
 import { createJob, updateJob, getJob, registerVideoFile, getVideoFile } from "@/lib/videoJobs";
 import {
   SEGMENT_COUNT,
@@ -61,6 +66,7 @@ import {
   buildCastBible,
   buildSegmentPrompt,
   assignScenesToSegments,
+  segmentSpeaksDialogue,
   verifyScriptCoverage
 } from "@/lib/videoPlan";
 
@@ -70,6 +76,32 @@ import {
 // job runs; everything more specific (clip numbers, Fal queue state, ffmpeg
 // strategy, per-boundary continuity scores) stays server-side in console logs
 // for diagnostics.
+// ═══════════════════════════════════════════════════════════════════════════
+// BY EXPLICIT DECISION: Seedance generates its own audio+video together
+// (generate_audio: true below) — Seedance is the ONLY source of what is
+// heard AND seen. Each clip's lips always match its own clip's own speech,
+// at the cost of the voice potentially drifting across the 3 independent
+// Seedance calls (no seed/voice-ID parameter exists to pin it — a hard Fal
+// API limitation, not something this code can control). Seedance also gets
+// a continuity instruction asking it to keep the same vocal tone/pitch/pace
+// per character across clips (see CONTINUITY_RULES in videoPlan.js) — a
+// best-effort nudge, not a guarantee.
+//
+// SUBTITLES_ENABLED controls the one separate thing layered on top:
+// burned-in subtitles. Their TIMING is drawn from real ElevenLabs
+// synthesis when a usable key is available — that audio is measured for
+// accurate per-line duration and then DISCARDED, never muxed in, so
+// Seedance's own dialogue is always and only what plays. If no usable key
+// is available, timing falls back per line to a script-only word-count
+// ESTIMATE so the film still ships subtitled. Each line is placed inside
+// the 15s window of the clip that actually speaks it (narration.js's
+// buildSegmentSubtitles).
+// Either way, nothing here can ever produce double audio: the separately
+// synthesized voice file is only ever a timing source, never an audio
+// source.
+// ═══════════════════════════════════════════════════════════════════════════
+const SUBTITLES_ENABLED = true;
+
 const PUBLIC_MESSAGE = {
   queued: "Preparing your video...",
   generating: "Creating your video...",
@@ -81,9 +113,10 @@ const PUBLIC_MESSAGE = {
 function sanitizeErrorForUser(rawMessage) {
   const text = String(rawMessage || "");
   if (/exhausted balance/i.test(text)) return "The video service is temporarily unavailable. Please try again later.";
-  if (/API key/i.test(text)) return "The video service is not configured correctly. Please contact support.";
+  if (/API key|ELEVENLABS_API_KEY/i.test(text)) return "The video service is not configured correctly. Please contact support.";
   if (/content_policy_violation|copyright/i.test(text)) return "We couldn't finish generating your video. Please try again.";
-  if (/ffmpeg|duration|stitch|normalise|measure/i.test(text)) return "We couldn't finish preparing your video. Please try again.";
+  if (/ffmpeg|duration|stitch|normalise|measure|narration|mux/i.test(text)) return "We couldn't finish preparing your video. Please try again.";
+  if (/Not enough ElevenLabs quota/i.test(text)) return "There is not enough voice-generation quota left to narrate this script. Top up your ElevenLabs plan and try again.";
   if (/no scenes were supplied/i.test(text)) return text; // this one is directly actionable by the user, keep it
   return "Something went wrong while generating your video. Please try again.";
 }
@@ -133,20 +166,55 @@ async function submitSegment(model, input) {
 }
 
 async function runVideoGenerationJob(jobId, payload) {
-  const { model, scenes, characters, referenceImages, resolution, aspectRatio, generateAudio } = payload;
+  const { model, scenes, characters, referenceImages, resolution, aspectRatio, productOnly } = payload;
   let workDir = null;
+  // Collected before the main diagnostics array exists, then merged into it.
+  const diagnosticsPreflight = [];
 
   try {
     // ── Preflight ─────────────────────────────────────────────────────────
-    // Both of these throw with actionable text. Checking them BEFORE the first
+    // All three throw with actionable text. Checking them BEFORE the first
     // Fal call means a missing key or a broken ffmpeg never wastes credits.
     getFalKey();
     const ffmpegBinary = assertFfmpegAvailable();
 
+    // The voice track is OPTIONAL. Subtitles are not: they are generated
+    // from the script itself and always burned in, so a film with no voice
+    // provider configured still delivers the dialogue on screen rather than
+    // failing outright.
+    //
+    // The check runs BEFORE the three paid Seedance renders and is free
+    // (it consumes no TTS quota), so we know which kind of film we are
+    // making before spending anything.
+    const scriptCharacters = (scenes || []).reduce(
+      (sum, scene) =>
+        sum + (scene?.dialogue || []).reduce((lineSum, line) => lineSum + String(line?.text || "").length, 0),
+      0
+    );
+
+    let canNarrate = false;
+    if (SUBTITLES_ENABLED && scriptCharacters > 0) {
+      try {
+        getElevenLabsKey();
+        const voiceReady = await verifyElevenLabsReady(scriptCharacters);
+        canNarrate = voiceReady.ok;
+        if (!voiceReady.ok) {
+          diagnosticsPreflight.push(`voice disabled: ${voiceReady.reason}`);
+        } else if (voiceReady.reason) {
+          console.log(`[video job ${jobId}] ${voiceReady.reason}`);
+        }
+      } catch (error) {
+        diagnosticsPreflight.push(`voice disabled: ${error.message}`);
+      }
+      if (!canNarrate) {
+        console.log(`[video job ${jobId}] ElevenLabs unavailable — subtitle timing will use the word-count estimate`);
+      }
+    }
+
     workDir = await createJobWorkDir(jobId);
 
     const { buckets, diagnostics: planDiagnostics, segmentPhases } = assignScenesToSegments(scenes);
-    const castBible = buildCastBible(characters, referenceImages);
+    const castBible = buildCastBible(characters, referenceImages, { productOnly });
     const characterImageUrls = referenceImages.map((ref) => ref.url);
 
     // Check 1 — script coverage: every scene the script produced must appear
@@ -171,7 +239,7 @@ async function runVideoGenerationJob(jobId, payload) {
     const segmentUrls = [];
     const segmentFiles = [];
     const segmentDetails = [];
-    const diagnostics = [...planDiagnostics];
+    const diagnostics = [...diagnosticsPreflight, ...planDiagnostics];
     const continuityScores = [];
     let continuityImageUrl = null;
     let previousHandoffFramePath = null;
@@ -236,7 +304,15 @@ async function runVideoGenerationJob(jobId, payload) {
           duration: SEGMENT_DURATION,
           resolution,
           aspect_ratio: aspectRatio,
-          generate_audio: generateAudio
+          // BY EXPLICIT DECISION: Seedance is the ONLY source of audio.
+          // Each clip's lips always match its own clip's own speech, at the
+          // cost of the voice potentially drifting across the 3 independent
+          // calls (no seed/voice-ID parameter exists to pin it). Subtitles
+          // may separately use real ElevenLabs synthesis purely to MEASURE
+          // accurate timing (see the subtitles step below) — that audio is
+          // never muxed in, so it can never combine with this into double
+          // audio.
+          generate_audio: true
         };
         if (imageUrls.length > 0) input.image_urls = imageUrls;
 
@@ -363,6 +439,91 @@ async function runVideoGenerationJob(jobId, payload) {
       throw new Error(`Final duration check failed: ${stitched.durationSeconds}s (expected ${TOTAL_SECONDS}s).`);
     }
 
+    // ── Subtitles ─────────────────────────────────────────────────────────
+    // Seedance is the ONLY source of audio (generate_audio: true, above) —
+    // this step only ever produces the burned-in subtitle TEXT/TIMING, and
+    // deliberately never supplies the actual soundtrack.
+    let finalDurationSeconds = stitched.durationSeconds;
+
+    // NON-FATAL by design. The stitched master above is already published,
+    // registered and verified at exactly 45s, and is only overwritten at the
+    // very end of this block once the subtitled copy has passed the same
+    // check. If anything in here fails, the film ships without subtitles
+    // rather than discarding three paid renders over an optional overlay.
+    try {
+    // A line is subtitled inside the 15s window of the clip whose prompt
+    // actually speaks it — the one hard fact available about when Seedance
+    // says anything. segmentSpeaksDialogue() is the same rule
+    // buildSegmentPrompt uses to decide whether to quote the lines, so the
+    // two cannot disagree; a clip that speaks nothing (a reused beat, or
+    // the wordless closing shot of a short script) gets no subtitles.
+    //
+    // Line DURATIONS are measured from real ElevenLabs synthesis when a
+    // usable key is available (canNarrate) — probed for length only, never
+    // mixed or muxed — and fall back per line to a word-count estimate.
+    const subtitleSegments = SEGMENT_WINDOWS.map((window, index) => ({
+      windowStart: window.start,
+      windowSeconds: window.end - window.start,
+      lines: segmentSpeaksDialogue(segmentPhases[index])
+        ? buckets[index].flatMap((scene, sceneIndex) =>
+            (scene?.dialogue || []).map((line) => ({
+              character: line?.character,
+              text: line?.text,
+              emotion: line?.emotion,
+              sceneIndex
+            }))
+          )
+        : []
+    }));
+
+    const narration = SUBTITLES_ENABLED
+      ? await buildSegmentSubtitles({
+          segments: subtitleSegments,
+          characters,
+          workDir,
+          measureWithTts: canNarrate
+        })
+      : { subtitleFileName: null, placed: [], diagnostics: [] };
+
+    if (SUBTITLES_ENABLED) {
+      console.log(
+        `[video job ${jobId}] subtitles: ${narration.placed?.length || 0} lines placed ` +
+          `(${narration.measured || 0} timed from ElevenLabs, ${narration.estimated || 0} from estimate)`
+      );
+    }
+
+    if (narration.diagnostics?.length > 0) diagnostics.push(...narration.diagnostics);
+
+    const hasSubtitles = Boolean(narration.subtitleFileName);
+
+    if (hasSubtitles) {
+      updateJob(jobId, { message: PUBLIC_MESSAGE.stitching, progress: 97 });
+      const muxedName = "final-with-subtitles.mp4";
+      // narrationFileName is ALWAYS null here, on purpose: Seedance's own
+      // baked-in audio (preserved by muxNarration's own-audio branch) is
+      // the only soundtrack this video ever gets, regardless of whether
+      // the subtitle timing above came from real ElevenLabs synthesis or
+      // the local estimate.
+      await muxNarration(workDir, stitched.filePath, null, muxedName, narration.subtitleFileName);
+
+      const muxedProbe = await probeMedia(muxedName, workDir);
+      if (muxedProbe.seconds === null) {
+        throw new Error("Could not measure the subtitled video's duration after muxing.");
+      }
+      if (Math.abs(muxedProbe.seconds - TOTAL_SECONDS) > 0.15) {
+        throw new Error(`Subtitled video duration is ${muxedProbe.seconds}s, outside the required 45s tolerance.`);
+      }
+
+      // Overwrite the already-published file in place so the job's key/url
+      // stay the same whether or not subtitles were added.
+      await fs.copyFile(path.join(workDir, muxedName), stitched.filePath);
+      finalDurationSeconds = muxedProbe.seconds;
+    }
+    } catch (subtitleError) {
+      console.error(`[video job ${jobId}] subtitles skipped — shipping the film without them:`, subtitleError);
+      diagnostics.push(`subtitles skipped: ${subtitleError?.message}`);
+    }
+
     if (diagnostics.length > 0) console.log(`[video job ${jobId}] diagnostics:`, diagnostics);
     if (continuityScores.length > 0) console.log(`[video job ${jobId}] continuity scores:`, continuityScores);
     if (stitched.warnings?.length > 0) console.log(`[video job ${jobId}] stitch notes:`, stitched.warnings);
@@ -374,7 +535,7 @@ async function runVideoGenerationJob(jobId, payload) {
       progress: 100,
       videoUrl: stitched.url,
       videoKey: stitched.key,
-      durationSeconds: stitched.durationSeconds,
+      durationSeconds: finalDurationSeconds,
       completedAt: new Date().toISOString()
     });
   } catch (error) {
@@ -511,12 +672,18 @@ export async function POST(request) {
     generationMode = "test",
     referenceImages = [],
     resolution = "720p",
-    aspectRatio = "16:9",
-    generateAudio = true
+    aspectRatio = "16:9"
   } = body || {};
 
   const scenes = Array.isArray(result?.scenes) ? result.scenes : [];
   const characters = Array.isArray(result?.characters) ? result.characters : [];
+
+  // A product-only marketing brief ("Show Character" off) must not have a
+  // person invented into it — the cast bible says so explicitly. Read from
+  // the generation result rather than guessed from an empty cast list, so a
+  // story whose character extraction happened to fail is not misread as an
+  // intentionally people-free commercial.
+  const productOnly = result?.purposeMode === "marketing" && result?.showCharacter === false;
 
   if (scenes.length === 0) {
     return NextResponse.json(
@@ -527,13 +694,19 @@ export async function POST(request) {
 
   const model = isSupportedModel(requestedModel) ? requestedModel : getVideoModel(generationMode);
 
-  // Preflight the two things that are cheap to check and expensive to discover
+  // Preflight the things that are cheap to check and expensive to discover
   // three minutes into a render.
   try {
     getFalKey();
   } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  // NOTE: no ElevenLabs preflight here. A missing/bad key degrades
+  // subtitle timing to the local estimate (see SUBTITLES_ENABLED below),
+  // it never blocks video generation — this used to call getElevenLabsKey()
+  // unconditionally and 500 the request before a job could even start.
+  // Never gate video generation on an optional feature.
 
   try {
     assertFfmpegAvailable();
@@ -573,7 +746,7 @@ export async function POST(request) {
     referenceImages: cleanReferences,
     resolution,
     aspectRatio,
-    generateAudio: generateAudio !== false
+    productOnly
   }).catch((error) => console.error(`[video job ${jobId}] unexpected:`, error));
 
   return NextResponse.json(

@@ -132,7 +132,7 @@ export default function Script() {
           <button onClick={() => router.push("/player")} style={{ padding: "10px 24px", background: "linear-gradient(135deg,#40534C,#677D6A)", border: "2.5px solid #D6BD98", borderRadius: "30px", color: "#D6BD98", fontSize: "13px", cursor: "pointer", fontFamily: "system-ui", fontWeight: "600", boxShadow: "0 4px 20px rgba(26,54,54,0.5)", letterSpacing: "0.04em", transition: "all 0.24s" }}
             onMouseEnter={e => { e.currentTarget.style.boxShadow = "0 6px 32px rgba(103,125,106,0.6)"; e.currentTarget.style.transform = "translateY(-1px)"; }}
             onMouseLeave={e => { e.currentTarget.style.boxShadow = "0 4px 20px rgba(26,54,54,0.5)"; e.currentTarget.style.transform = "translateY(0)"; }}>
-            ▶ Play Cinematic
+            ▶ Script Preview (free)
           </button>
         </div>
       </nav>
@@ -239,7 +239,7 @@ export default function Script() {
         <button onClick={() => router.push("/player")} style={{ padding: "13px 30px", background: "rgba(64,83,76,0.4)", border: "2px solid rgba(103,125,106,0.5)", borderRadius: "30px", color: "#D6BD98", fontSize: "14px", cursor: "pointer", fontFamily: "system-ui", fontWeight: "500", letterSpacing: "0.04em", transition: "all 0.24s" }}
           onMouseEnter={e => { e.currentTarget.style.borderColor = "#D6BD98"; }}
           onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(103,125,106,0.5)"; }}>
-          ▶ Play Cinematic Experience
+          ▶ Script Preview — browser read-through, not the AI video
         </button>
       </section>
     </main>
