@@ -1,9 +1,13 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// elevenLabs.js — shared ElevenLabs TTS config and client
+// elevenLabs.js — shared ElevenLabs config and client
 //
-// Single source of truth for voice IDs and emotion presets. Used by
-// narration.js (the real 45s pipeline's dialogue track) and by the
-// /api/voices route (kept for standalone use).
+// The video pipeline uses ElevenLabs only for SUBTITLE TIMING:
+// forcedAlign() / transcribeWords() measure when each line is actually
+// spoken in the generated clip's own audio (see subtitleAlignment.js).
+// No speech is synthesized for the film.
+//
+// Voice IDs and emotion presets below are used by the /api/voices route
+// and the (currently unused) narration track builder in narration.js.
 //
 // pickVoiceId() is deterministic: the same character name always resolves to
 // the same voice ID, in every job, forever. That is what keeps a character's
@@ -91,66 +95,70 @@ export function pickVoiceId(characterName, gender) {
   return pool[index];
 }
 
-/**
- * Check the key works and there is enough quota, BEFORE any video credits
- * are spent.
- *
- * This is a free GET — it consumes no characters. It exists because the
- * voice track is built at the very END of the job, after three Seedance
- * renders have already been paid for; discovering a dead key at that point
- * would waste the entire video spend and silently ship a film with no
- * dialogue.
- *
- * Deliberately fails CLOSED only on a definite rejection (bad key, known
- * insufficient quota). A network blip or an unexpected response shape lets
- * the job continue rather than blocking a paid render on a flaky check.
- *
- * @param {number} charactersNeeded total characters about to be synthesized
- * @returns {Promise<{ok: boolean, reason?: string, remaining?: number}>}
- */
-export async function verifyElevenLabsReady(charactersNeeded = 0) {
-  const apiKey = getElevenLabsKey();
-
-  let response;
+/** True when an ElevenLabs key is configured. Never throws. */
+export function hasElevenLabsKey() {
   try {
-    response = await fetch("https://api.elevenlabs.io/v1/user/subscription", {
-      method: "GET",
-      headers: { "xi-api-key": apiKey }
-    });
-  } catch (error) {
-    return { ok: true, reason: `voice quota check skipped (network): ${error.message}` };
-  }
-
-  if (response.status === 401 || response.status === 403) {
-    return { ok: false, reason: "The ElevenLabs API key was rejected. Check ELEVENLABS_API_KEY." };
-  }
-  if (!response.ok) {
-    return { ok: true, reason: `voice quota check skipped (HTTP ${response.status})` };
-  }
-
-  let data;
-  try {
-    data = await response.json();
+    getElevenLabsKey();
+    return true;
   } catch {
-    return { ok: true, reason: "voice quota check skipped (unreadable response)" };
+    return false;
   }
+}
 
-  const used = Number(data?.character_count);
-  const limit = Number(data?.character_limit);
-  if (!Number.isFinite(used) || !Number.isFinite(limit)) {
-    return { ok: true, reason: "voice quota check skipped (no quota fields)" };
+async function postMultipart(url, form, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "xi-api-key": getElevenLabsKey() },
+      body: form,
+      signal: controller.signal
+    });
+    const body = await response.text();
+    if (!response.ok) {
+      throw new Error(`ElevenLabs ${new URL(url).pathname} failed (${response.status}): ${body.slice(0, 300)}`);
+    }
+    return JSON.parse(body);
+  } finally {
+    clearTimeout(timer);
   }
+}
 
-  const remaining = limit - used;
-  if (remaining < charactersNeeded) {
-    return {
-      ok: false,
-      remaining,
-      reason: `Not enough ElevenLabs quota for this script: ${charactersNeeded} characters needed, ${remaining} remaining.`
-    };
-  }
+/**
+ * Forced alignment: given an audio file and the exact text spoken in it,
+ * return per-character and per-word timings.
+ *
+ * Response shape: { characters: [{text,start,end}], words: [{text,start,end,loss}], loss }
+ * `characters` indexes 1:1 into the submitted text. `loss` is lower-is-better;
+ * correctly matched speech measures ~0.5-0.6, mismatched text ~3.5+.
+ *
+ * The key needs the "Forced Alignment" permission. Billed like speech-to-text
+ * (per audio duration), so a 15s clip costs very little.
+ */
+export async function forcedAlign(audioBuffer, text, fileName = "clip.wav") {
+  const form = new FormData();
+  form.append("file", new Blob([audioBuffer], { type: "audio/wav" }), fileName);
+  form.append("text", text);
+  return postMultipart("https://api.elevenlabs.io/v1/forced-alignment", form, 90000);
+}
 
-  return { ok: true, remaining };
+/**
+ * Speech-to-text with word timestamps. Used only as a fallback when forced
+ * alignment says the expected text does not match what was actually said
+ * (e.g. the video model skipped or reworded a line).
+ *
+ * Returns the `words` array: [{ text, start, end, type: "word"|"spacing"|"audio_event", logprob }].
+ * The key needs the "Speech to Text" permission.
+ */
+export async function transcribeWords(audioBuffer, fileName = "clip.wav") {
+  const form = new FormData();
+  form.append("file", new Blob([audioBuffer], { type: "audio/wav" }), fileName);
+  form.append("model_id", "scribe_v2");
+  form.append("timestamps_granularity", "word");
+  form.append("tag_audio_events", "false");
+  const data = await postMultipart("https://api.elevenlabs.io/v1/speech-to-text", form, 90000);
+  return Array.isArray(data?.words) ? data.words : [];
 }
 
 /**

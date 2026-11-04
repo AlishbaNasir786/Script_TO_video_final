@@ -20,6 +20,16 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Subtitles
+
+Burned-in subtitles are timed from each generated clip's own audio, not estimated:
+
+1. Each 15s clip's audio is aligned against the lines that clip speaks (ElevenLabs Forced Alignment), giving the real start/end of every word.
+2. Each line is verified (alignment confidence + ffmpeg speech detection). Lines the video model skipped or reworded fall back to speech-to-text word timestamps.
+3. If a clip's audio can't be measured at all (no key, API down, no audio track), that clip falls back to a word-count estimate. Subtitle problems never fail a video.
+
+Set `ELEVENLABS_API_KEY` in `.env.local`. The key only needs the **Forced Alignment** and **Speech to Text** permissions; no speech is synthesized. Cost is billed per second of audio (about 45s per video).
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
