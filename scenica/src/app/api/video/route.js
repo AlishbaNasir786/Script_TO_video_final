@@ -53,8 +53,8 @@ import {
   probeMedia,
   cleanupWorkDir
 } from "@/lib/videoStitch";
-import { getElevenLabsKey, verifyElevenLabsReady } from "@/lib/elevenLabs";
-import { buildSegmentSubtitles } from "@/lib/narration";
+import { hasElevenLabsKey } from "@/lib/elevenLabs";
+import { buildAlignedSubtitles } from "@/lib/subtitleAlignment";
 import { createJob, updateJob, getJob, registerVideoFile, getVideoFile } from "@/lib/videoJobs";
 import {
   SEGMENT_COUNT,
@@ -88,17 +88,14 @@ import {
 // best-effort nudge, not a guarantee.
 //
 // SUBTITLES_ENABLED controls the one separate thing layered on top:
-// burned-in subtitles. Their TIMING is drawn from real ElevenLabs
-// synthesis when a usable key is available — that audio is measured for
-// accurate per-line duration and then DISCARDED, never muxed in, so
-// Seedance's own dialogue is always and only what plays. If no usable key
-// is available, timing falls back per line to a script-only word-count
-// ESTIMATE so the film still ships subtitled. Each line is placed inside
-// the 15s window of the clip that actually speaks it (narration.js's
-// buildSegmentSubtitles).
-// Either way, nothing here can ever produce double audio: the separately
-// synthesized voice file is only ever a timing source, never an audio
-// source.
+// burned-in subtitles. Their TIMING is measured from each clip's OWN
+// Seedance audio (lib/subtitleAlignment.js): ElevenLabs forced alignment
+// of the clip audio against the lines that clip speaks, verified per line,
+// with a speech-to-text fallback for lines the model skipped or reworded.
+// Without an ElevenLabs key, or if the audio cannot be measured, timing
+// falls back to a word-count estimate inside the clip's 15s window, so the
+// film always ships subtitled. Nothing is synthesized: Seedance's own
+// dialogue is the only audio in the film.
 // ═══════════════════════════════════════════════════════════════════════════
 const SUBTITLES_ENABLED = true;
 
@@ -178,37 +175,12 @@ async function runVideoGenerationJob(jobId, payload) {
     getFalKey();
     const ffmpegBinary = assertFfmpegAvailable();
 
-    // The voice track is OPTIONAL. Subtitles are not: they are generated
-    // from the script itself and always burned in, so a film with no voice
-    // provider configured still delivers the dialogue on screen rather than
-    // failing outright.
-    //
-    // The check runs BEFORE the three paid Seedance renders and is free
-    // (it consumes no TTS quota), so we know which kind of film we are
-    // making before spending anything.
-    const scriptCharacters = (scenes || []).reduce(
-      (sum, scene) =>
-        sum + (scene?.dialogue || []).reduce((lineSum, line) => lineSum + String(line?.text || "").length, 0),
-      0
-    );
-
-    let canNarrate = false;
-    if (SUBTITLES_ENABLED && scriptCharacters > 0) {
-      try {
-        getElevenLabsKey();
-        const voiceReady = await verifyElevenLabsReady(scriptCharacters);
-        canNarrate = voiceReady.ok;
-        if (!voiceReady.ok) {
-          diagnosticsPreflight.push(`voice disabled: ${voiceReady.reason}`);
-        } else if (voiceReady.reason) {
-          console.log(`[video job ${jobId}] ${voiceReady.reason}`);
-        }
-      } catch (error) {
-        diagnosticsPreflight.push(`voice disabled: ${error.message}`);
-      }
-      if (!canNarrate) {
-        console.log(`[video job ${jobId}] ElevenLabs unavailable — subtitle timing will use the word-count estimate`);
-      }
+    // Subtitle timing is measured from the generated audio when an
+    // ElevenLabs key is configured. It is optional: without a key the
+    // subtitles are still burned in, timed by estimate. Never blocks a job.
+    const canMeasureSubtitles = SUBTITLES_ENABLED && hasElevenLabsKey();
+    if (SUBTITLES_ENABLED && !canMeasureSubtitles) {
+      diagnosticsPreflight.push("ELEVENLABS_API_KEY not set — subtitle timing will use the word-count estimate");
     }
 
     workDir = await createJobWorkDir(jobId);
@@ -307,11 +279,9 @@ async function runVideoGenerationJob(jobId, payload) {
           // BY EXPLICIT DECISION: Seedance is the ONLY source of audio.
           // Each clip's lips always match its own clip's own speech, at the
           // cost of the voice potentially drifting across the 3 independent
-          // calls (no seed/voice-ID parameter exists to pin it). Subtitles
-          // may separately use real ElevenLabs synthesis purely to MEASURE
-          // accurate timing (see the subtitles step below) — that audio is
-          // never muxed in, so it can never combine with this into double
-          // audio.
+          // calls (no seed/voice-ID parameter exists to pin it). The
+          // subtitle step below measures this audio to time the subtitles;
+          // it never adds audio of its own.
           generate_audio: true
         };
         if (imageUrls.length > 0) input.image_urls = imageUrls;
@@ -458,12 +428,19 @@ async function runVideoGenerationJob(jobId, payload) {
     // two cannot disagree; a clip that speaks nothing (a reused beat, or
     // the wordless closing shot of a short script) gets no subtitles.
     //
-    // Line DURATIONS are measured from real ElevenLabs synthesis when a
-    // usable key is available (canNarrate) — probed for length only, never
-    // mixed or muxed — and fall back per line to a word-count estimate.
+    // WHEN inside the clip each line is spoken is measured from that clip's
+    // own audio (buildAlignedSubtitles). Each clip's offset in the master is
+    // the measured length of the clips before it — clips come back at e.g.
+    // 15.03s, and assuming exactly 15.00s would drift by that much per cut.
+    const clipSeconds = [];
+    for (let index = 0; index < segmentFiles.length; index += 1) {
+      const probe = await probeMedia(segmentFiles[index], workDir);
+      clipSeconds.push(Number.isFinite(probe.seconds) && probe.seconds > 0 ? probe.seconds : SEGMENT_DURATION);
+    }
     const subtitleSegments = SEGMENT_WINDOWS.map((window, index) => ({
-      windowStart: window.start,
-      windowSeconds: window.end - window.start,
+      clipFile: segmentFiles[index] || null,
+      windowStart: clipSeconds.slice(0, index).reduce((sum, seconds) => sum + seconds, 0),
+      windowSeconds: clipSeconds[index] ?? window.end - window.start,
       lines: segmentSpeaksDialogue(segmentPhases[index])
         ? buckets[index].flatMap((scene, sceneIndex) =>
             (scene?.dialogue || []).map((line) => ({
@@ -477,18 +454,18 @@ async function runVideoGenerationJob(jobId, payload) {
     }));
 
     const narration = SUBTITLES_ENABLED
-      ? await buildSegmentSubtitles({
+      ? await buildAlignedSubtitles({
           segments: subtitleSegments,
-          characters,
           workDir,
-          measureWithTts: canNarrate
+          measure: canMeasureSubtitles
         })
-      : { subtitleFileName: null, placed: [], diagnostics: [] };
+      : { subtitleFileName: null, placed: [], diagnostics: [], stats: {} };
 
     if (SUBTITLES_ENABLED) {
+      const { aligned = 0, transcribed = 0, estimated = 0 } = narration.stats || {};
       console.log(
         `[video job ${jobId}] subtitles: ${narration.placed?.length || 0} lines placed ` +
-          `(${narration.measured || 0} timed from ElevenLabs, ${narration.estimated || 0} from estimate)`
+          `(${aligned} aligned to the audio, ${transcribed} from transcript, ${estimated} estimated)`
       );
     }
 
@@ -501,9 +478,8 @@ async function runVideoGenerationJob(jobId, payload) {
       const muxedName = "final-with-subtitles.mp4";
       // narrationFileName is ALWAYS null here, on purpose: Seedance's own
       // baked-in audio (preserved by muxNarration's own-audio branch) is
-      // the only soundtrack this video ever gets, regardless of whether
-      // the subtitle timing above came from real ElevenLabs synthesis or
-      // the local estimate.
+      // the only soundtrack this video ever gets; the subtitle step above
+      // only measures that audio, it never adds any.
       await muxNarration(workDir, stitched.filePath, null, muxedName, narration.subtitleFileName);
 
       const muxedProbe = await probeMedia(muxedName, workDir);

@@ -115,7 +115,7 @@ export function attachLineTiming(scenes = []) {
 export function planPacing(clips, options = {}) {
   // Defaults reproduce the original whole-film behaviour exactly. A window
   // lets the same rules lay lines out inside ONE 15s clip (see
-  // buildSegmentSubtitles), and maxTempo: Infinity lets a subtitle-only
+  // estimateSegmentPlacement), and maxTempo: Infinity lets a subtitle-only
   // caller compress durations as far as needed rather than ever drop a line.
   const { windowStart = 0, windowSeconds = TARGET_SECONDS, maxTempo = MAX_TEMPO } = options;
   const diagnostics = [];
@@ -225,7 +225,7 @@ export function estimateLineSeconds(text) {
 const SUBTITLE_MAX_CHARS_PER_LINE = 42;
 const SUBTITLE_MAX_LINES = 2;
 
-function wrapSubtitleText(text) {
+export function wrapSubtitleText(text) {
   const words = String(text).trim().split(/\s+/).filter(Boolean);
   const rows = [];
   let row = "";
@@ -369,104 +369,34 @@ export async function buildSubtitlesOnly({ lines, workDir }) {
 }
 
 /**
- * Subtitles for a film whose AUDIO comes from Seedance itself.
+ * Word-count ESTIMATE of where each line falls inside ONE clip's window.
  *
- * Seedance speaks a line inside whichever 15s clip's prompt contains it —
- * that is the one hard fact available about when anything is said. Laying
- * the whole script out across 45s (as the separate-voice path does) ignores
- * it: on a short script whose last clip is a wordless closing beat, the
- * final lines' subtitles landed over that silent shot, ten seconds after
- * they were actually spoken. So each line is placed strictly INSIDE the
- * window of the clip that speaks it, and a clip that speaks nothing gets no
- * subtitles at all.
+ * Last-resort fallback only. The normal path (subtitleAlignment.js) measures
+ * the real timing from the clip's own audio; this is used for a clip whose
+ * audio could not be measured at all (no key, API down, no audio track), so
+ * the film still ships subtitled. Lines stay inside the window of the clip
+ * that speaks them. Pure function: no I/O, no paid calls.
  *
- * Inside a clip the exact moment is still an estimate (Seedance exposes no
- * timing), paced by the same rules as everything else. Line durations are
- * MEASURED from real ElevenLabs synthesis when measureWithTts is set — that
- * audio is only ever probed for its length, never mixed or muxed — and fall
- * back per line to the word-count estimate, so a TTS failure can cost
- * accuracy but never a subtitle.
- *
- * @param {{windowStart:number, windowSeconds:number, lines:object[]}[]} segments
+ * @param {{windowStart:number, windowSeconds:number, lines:{text:string, character?:string, sceneIndex?:number}[]}} segment
+ * @returns {{placed: object[], diagnostics: string[]}}
  */
-export async function buildSegmentSubtitles({
-  segments = [],
-  characters = [],
-  workDir,
-  measureWithTts = false,
-  synthesize = synthesizeSpeech
-}) {
-  const diagnostics = [];
+export function estimateSegmentPlacement(segment) {
+  const spoken = (segment?.lines || []).filter((line) => line && String(line.text || "").trim());
+  if (spoken.length === 0) return { placed: [], diagnostics: [] };
 
-  const genderByName = new Map();
-  (characters || []).forEach((character) => {
-    if (character?.name) genderByName.set(String(character.name).trim().toUpperCase(), character.gender);
+  const clips = spoken.map((line) => ({
+    fileName: null,
+    text: line.text,
+    character: line.character,
+    sceneIndex: Number.isFinite(line.sceneIndex) ? line.sceneIndex : 0,
+    rawSeconds: estimateLineSeconds(line.text)
+  }));
+
+  return planPacing(clips, {
+    windowStart: segment.windowStart,
+    windowSeconds: segment.windowSeconds,
+    maxTempo: Infinity
   });
-  const voiceIdFor = (characterName) => {
-    const key = String(characterName || "").trim().toUpperCase();
-    return pickVoiceId(key, genderByName.get(key));
-  };
-
-  const placedAll = [];
-  let lineNumber = 0;
-  let measured = 0;
-  let estimated = 0;
-
-  for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
-    const segment = segments[segmentIndex];
-    const spoken = (segment?.lines || []).filter((line) => line && String(line.text || "").trim());
-    if (spoken.length === 0) continue;
-
-    const clips = [];
-    for (const line of spoken) {
-      lineNumber += 1;
-      let rawSeconds = null;
-
-      if (measureWithTts) {
-        try {
-          const fileName = `subtitle-timing-${lineNumber}.mp3`;
-          const audio = await synthesize(line.text, voiceIdFor(line.character), line.emotion);
-          await fs.writeFile(path.join(workDir, fileName), audio);
-          const probe = await probeMedia(fileName, workDir);
-          if (Number.isFinite(probe.seconds) && probe.seconds > 0) rawSeconds = probe.seconds;
-        } catch (error) {
-          diagnostics.push(`subtitle line ${lineNumber} timed by estimate (voice measurement failed: ${error.message})`);
-        }
-      }
-
-      if (rawSeconds === null) {
-        rawSeconds = estimateLineSeconds(line.text);
-        estimated += 1;
-      } else {
-        measured += 1;
-      }
-
-      clips.push({
-        fileName: null,
-        text: line.text,
-        character: line.character,
-        sceneIndex: Number.isFinite(line.sceneIndex) ? line.sceneIndex : 0,
-        rawSeconds
-      });
-    }
-
-    const { placed, diagnostics: notes } = planPacing(clips, {
-      windowStart: segment.windowStart,
-      windowSeconds: segment.windowSeconds,
-      maxTempo: Infinity
-    });
-    placedAll.push(...placed);
-    notes.forEach((note) => diagnostics.push(`clip ${segmentIndex + 1} subtitles: ${note}`));
-  }
-
-  if (placedAll.length === 0) {
-    return { hasSubtitles: false, subtitleFileName: null, placed: [], diagnostics, measured, estimated };
-  }
-
-  const subtitleFileName = "subtitles.ass";
-  await fs.writeFile(path.join(workDir, subtitleFileName), buildAssSubtitles(buildSubtitleCues(placedAll)), "utf8");
-
-  return { hasSubtitles: true, subtitleFileName, placed: placedAll, diagnostics, measured, estimated };
 }
 
 // ── Main entry point ───────────────────────────────────────────────────────
